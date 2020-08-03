@@ -22,6 +22,8 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#include <intrinhelper.h>
+
 #include <assert.h>
 #include <rte_config.h>
 #include <rte_ip.h>
@@ -225,6 +227,7 @@ int fast_flows_qman_fwd(struct dataplane_context *ctx,
   return 0;
 }
 
+#pragma vectorize
 void fast_flows_packet_parse(struct dataplane_context *ctx,
     struct network_buf_handle **nbhs, void **fss, struct tcp_opts *tos,
     uint16_t n)
@@ -874,6 +877,7 @@ static void flow_rx_seq_write(struct flextcp_pl_flowst *fs, uint32_t seq,
 }
 #endif
 
+#pragma vectorize
 static void flow_tx_segment(struct dataplane_context *ctx,
     struct network_buf_handle *nbh, struct flextcp_pl_flowst *fs,
     uint32_t seq, uint32_t ack, uint32_t rxwnd, uint16_t payload,
@@ -954,6 +958,7 @@ static void flow_tx_segment(struct dataplane_context *ctx,
   tx_send(ctx, nbh, 0, hdrs_len + payload);
 }
 
+#pragma vectorize
 static void flow_tx_ack(struct dataplane_context *ctx, uint32_t seq,
     uint32_t ack, uint32_t rxwnd, uint32_t echots, uint32_t myts,
     struct network_buf_handle *nbh, struct tcp_timestamp_opt *ts_opt)
@@ -1029,6 +1034,7 @@ static void flow_tx_ack(struct dataplane_context *ctx, uint32_t seq,
   tx_send(ctx, nbh, network_buf_off(nbh), hdrlen);
 }
 
+#pragma vectorize
 static void flow_reset_retransmit(struct flextcp_pl_flowst *fs)
 {
   uint32_t x;
@@ -1077,8 +1083,8 @@ void fast_flows_kernelxsums(struct network_buf_handle *nbh,
 
 static inline uint32_t flow_hash(struct flow_key *k)
 {
-  return crc32c_sse42_u32(k->local_port.x | (((uint32_t) k->remote_port.x) << 16),
-      crc32c_sse42_u64(k->local_ip.x | (((uint64_t) k->remote_ip.x) << 32), 0));
+  return crc32c_sse42_u32(k->local_port | (((uint32_t) k->remote_port) << 16),
+      crc32c_sse42_u64(k->local_ip | (((uint64_t) k->remote_ip) << 32), 0));
 }
 
 void fast_flows_packet_fss(struct dataplane_context *ctx,
@@ -1149,10 +1155,10 @@ void fast_flows_packet_fss(struct dataplane_context *ctx,
 
       MEM_BARRIER();
       fs = &fp_state->flowst[fid];
-      if ((fs->local_ip.x == p->ip.dest.x) &
-          (fs->remote_ip.x == p->ip.src.x) &
-          (fs->local_port.x == p->tcp.dest.x) &
-          (fs->remote_port.x == p->tcp.src.x))
+      if ((fs->local_ip == p->ip.dest) &
+          (fs->remote_ip == p->ip.src) &
+          (fs->local_port == p->tcp.dest) &
+          (fs->remote_port == p->tcp.src))
       {
         rte_prefetch0((uint8_t *) fs + 64);
         fss[i] = &fp_state->flowst[fid];

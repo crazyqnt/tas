@@ -159,12 +159,12 @@ static inline uint16_t network_ip_phdr_xsum(beui32_t ip_src, beui32_t ip_dst,
 {
   uint32_t sum = 0;
 
-  sum += ip_src.x & 0xffff;
-  sum += (ip_src.x >> 16) & 0xffff;
-  sum += ip_dst.x & 0xffff;
-  sum += (ip_dst .x >> 16) & 0xffff;
+  sum += ip_src & 0xffff;
+  sum += (ip_src >> 16) & 0xffff;
+  sum += ip_dst & 0xffff;
+  sum += (ip_dst >> 16) & 0xffff;
   sum += ((uint16_t) proto) << 8;
-  sum += t_beui16(l3_paylen).x;
+  sum += t_beui16(l3_paylen);
 
   sum = ((sum & 0xffff0000) >> 16) + (sum & 0xffff);
   sum = ((sum & 0xffff0000) >> 16) + (sum & 0xffff);
