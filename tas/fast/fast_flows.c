@@ -770,6 +770,7 @@ unlock:
 }
 
 /* start retransmitting */
+#pragma vectorize
 void fast_flows_retransmit(struct dataplane_context *ctx, uint32_t flow_id)
 {
   struct flextcp_pl_flowst *fs = &fp_state->flowst[flow_id];
