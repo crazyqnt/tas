@@ -61,10 +61,9 @@ int fast_flows_packet(struct dataplane_context *ctx,
     struct network_buf_handle *nbh, void *fs, struct tcp_opts *opts,
     uint32_t ts);
 void fast_flows_packet_fss(struct dataplane_context *ctx,
-    struct network_buf_handle **nbhs, void **fss, uint16_t n);
+    struct network_buf_handle *nbhs, void **fss);
 void fast_flows_packet_parse(struct dataplane_context *ctx,
-    struct network_buf_handle **nbhs, void **fss, struct tcp_opts *tos,
-    uint16_t n);
+    struct network_buf_handle *nbhs, void **fss, struct tcp_opts *tos);
 void fast_flows_packet_pfbufs(struct dataplane_context *ctx,
     void **fss, uint16_t n);
 void fast_flows_kernelxsums(struct network_buf_handle *nbh,
