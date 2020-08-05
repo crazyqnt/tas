@@ -650,6 +650,7 @@ slowpath:
 }
 
 /* Update receive and transmit queue pointers from application */
+#pragma vectorize
 int fast_flows_bump(struct dataplane_context *ctx, uint32_t flow_id,
     uint16_t bump_seq, uint32_t rx_bump, uint32_t tx_bump, uint8_t flags,
     struct network_buf_handle *nbh, uint32_t ts)
