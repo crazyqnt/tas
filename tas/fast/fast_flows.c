@@ -191,7 +191,7 @@ int fast_flows_qman(struct dataplane_context *ctx, uint32_t queue,
 
   /* make sure we don't send out dummy byte for FIN */
   if (fin) {
-    assert(len > 0);
+    //assert(len > 0);
     len--;
   }
 
@@ -277,6 +277,7 @@ void fast_flows_packet_pfbufs(struct dataplane_context *ctx,
 }
 
 /* Received packet */
+#pragma vectorize
 int fast_flows_packet(struct dataplane_context *ctx,
     struct network_buf_handle *nbh, void *fsp, struct tcp_opts *opts,
     uint32_t ts)
@@ -521,7 +522,7 @@ int fast_flows_packet(struct dataplane_context *ctx,
     if (fs->rx_next_pos >= fs->rx_len) {
       fs->rx_next_pos -= fs->rx_len;
     }
-    assert(fs->rx_next_pos < fs->rx_len);
+    //assert(fs->rx_next_pos < fs->rx_len);
     fs->rx_next_seq += payload_bytes;
 #ifndef SKIP_ACK
     trigger_ack = 1;
@@ -556,7 +557,7 @@ int fast_flows_packet(struct dataplane_context *ctx,
           if (fs->rx_next_pos >= fs->rx_len) {
             fs->rx_next_pos -= fs->rx_len;
           }
-          assert(fs->rx_next_pos < fs->rx_len);
+          //assert(fs->rx_next_pos < fs->rx_len);
           fs->rx_next_seq += fs->rx_ooo_len;
 
           fs->rx_ooo_len = 0;

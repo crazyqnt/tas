@@ -8,7 +8,7 @@
 #
 
 CXXFLAGS=-I$(INTRINHELPER) -I$(DPDK_INST) -Itas/fast -Itas/include -Iinclude
-CXXFLAGS+= -ferror-limit=20
+CXXFLAGS+= -ferror-limit=30
 
 test1:
 	$(VECTORIZER) tas/fast/fast_flows.c -- $(CXXFLAGS)

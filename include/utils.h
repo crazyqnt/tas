@@ -32,8 +32,8 @@
 #define MAX(a,b) ((b) > (a) ? (b) : (a))
 #define MEM_BARRIER() __asm__ volatile("" ::: "memory")
 #define STATIC_ASSERT(COND,MSG) typedef char static_assertion_##MSG[(COND)?1:-1]
-#define LIKELY(x) __builtin_expect((x),1)
-#define UNLIKELY(x) __builtin_expect((x),0)
+#define LIKELY(x) (x)
+#define UNLIKELY(x) (x)
 
 int util_parse_ipv4(const char *s, uint32_t *ip);
 int util_parse_mac(const char *s, uint64_t *mac);
