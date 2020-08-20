@@ -103,6 +103,7 @@ void fast_flows_qman_pfbufs(struct dataplane_context *ctx, uint32_t *queues,
 }
 
 
+#pragma vectorize
 int fast_flows_qman(struct dataplane_context *ctx, uint32_t queue,
     struct network_buf_handle *nbh, uint32_t ts)
 {
@@ -203,6 +204,7 @@ unlock:
   return ret;
 }
 
+#pragma vectorize
 int fast_flows_qman_fwd(struct dataplane_context *ctx,
     struct flextcp_pl_flowst *fs)
 {
@@ -257,23 +259,21 @@ void fast_flows_packet_parse(struct dataplane_context *ctx,
   //}
 }
 
+#pragma vectorize
 void fast_flows_packet_pfbufs(struct dataplane_context *ctx,
-    void **fss, uint16_t n)
+    void *fss, uint16_t n)
 {
   uint16_t i;
   uint64_t rx_base;
   void *p;
   struct flextcp_pl_flowst *fs;
+  if (fss == NULL)
+    return;
 
-  for (i = 0; i < n; i++) {
-    if (fss[i] == NULL)
-      continue;
-
-    fs = fss[i];
-    rx_base = fs->rx_base_sp & FLEXNIC_PL_FLOWST_RX_MASK;
-    p = dma_pointer(rx_base + fs->rx_next_pos, 1);
-    rte_prefetch0(p);
-  }
+  fs = fss;
+  rx_base = fs->rx_base_sp & FLEXNIC_PL_FLOWST_RX_MASK;
+  p = dma_pointer(rx_base + fs->rx_next_pos, 1);
+  rte_prefetch0(p);
 }
 
 /* Received packet */
@@ -836,6 +836,7 @@ out:
 }
 
 /* read `len` bytes from position `pos` in cirucular transmit buffer */
+#pragma vectorize
 static void flow_tx_read(struct flextcp_pl_flowst *fs, uint32_t pos,
     uint16_t len, void *dst)
 {
@@ -851,6 +852,7 @@ static void flow_tx_read(struct flextcp_pl_flowst *fs, uint32_t pos,
 }
 
 /* write `len` bytes to position `pos` in cirucular receive buffer */
+#pragma vectorize
 static void flow_rx_write(struct flextcp_pl_flowst *fs, uint32_t pos,
     uint16_t len, const void *src)
 {

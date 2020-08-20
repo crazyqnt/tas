@@ -34,6 +34,7 @@ int fast_kernel_poll(struct dataplane_context *ctx,
     struct network_buf_handle *nbh, uint32_t ts);
 void fast_kernel_packet(struct dataplane_context *ctx,
     struct network_buf_handle *nbh);
+void fast_kernel_packet_vec(__m512i, __m512i, __mmask8);
 
 /* fast_appctx.c */
 void fast_appctx_poll_pf(struct dataplane_context *ctx, uint32_t id);
@@ -60,12 +61,15 @@ int fast_flows_qman_fwd(struct dataplane_context *ctx,
 int fast_flows_packet(struct dataplane_context *ctx,
     struct network_buf_handle *nbh, void *fs, struct tcp_opts *opts,
     uint32_t ts);
+__m256i fast_flows_packet_vec(__m512i, __m512i, __m512i, __m512i, __m256i, __mmask8);
 void fast_flows_packet_fss(struct dataplane_context *ctx,
     struct network_buf_handle *nbhs, void **fss);
+void fast_flows_packet_fss_vec(__m512i, __m512i, __m512i, __mmask8);
 void fast_flows_packet_parse(struct dataplane_context *ctx,
     struct network_buf_handle *nbhs, void **fss, struct tcp_opts *tos);
+void fast_flows_packet_parse_vec(__m512i, __m512i, __m512i, __m512i, __mmask8);
 void fast_flows_packet_pfbufs(struct dataplane_context *ctx,
-    void **fss, uint16_t n);
+    void *fss, uint16_t n);
 void fast_flows_kernelxsums(struct network_buf_handle *nbh,
     struct pkt_tcp *p);
 

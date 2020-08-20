@@ -31,6 +31,8 @@
 #include <rte_malloc.h>
 #include <rte_cycles.h>
 
+#include <intrinhelper.h>
+
 #include <tas_memif.h>
 
 #include "internal.h"
@@ -278,35 +280,108 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
   STATS_ADD(ctx, rx_total, n);
   n = ret;
 
+  for (unsigned j = 0; j < BATCH_SIZE / 8; j++) {
+    if (n <= j * BATCH_SIZE) {
+      break;
+    }
+    __m512i ctx_vec = _mm512_set1_epi64((uintptr_t) ctx);
+    __m512i bhs_vec = _mm512_set_epi64((uintptr_t) (bhs + j * BATCH_SIZE), (uintptr_t) (bhs + j * BATCH_SIZE + 1),
+      (uintptr_t) (bhs + j * BATCH_SIZE + 2), (uintptr_t) (bhs + j * BATCH_SIZE + 3), (uintptr_t) (bhs + j * BATCH_SIZE + 4),
+      (uintptr_t) (bhs + j * BATCH_SIZE + 5), (uintptr_t) (bhs + j * BATCH_SIZE + 6), (uintptr_t) (bhs + j * BATCH_SIZE + 7)  
+    );
+    __m512i fss_vec = _mm512_set_epi64((uintptr_t) (fss + j * BATCH_SIZE), (uintptr_t) (fss + j * BATCH_SIZE + 1),
+      (uintptr_t) (fss + j * BATCH_SIZE + 2), (uintptr_t) (fss + j * BATCH_SIZE + 3), (uintptr_t) (fss + j * BATCH_SIZE + 4),
+      (uintptr_t) (fss + j * BATCH_SIZE + 5), (uintptr_t) (fss + j * BATCH_SIZE + 6), (uintptr_t) (fss + j * BATCH_SIZE + 7)  
+    );
+    __m512i tcpopts_vec = _mm512_set_epi64((uintptr_t) (tcpopts + j * BATCH_SIZE), (uintptr_t) (tcpopts + j * BATCH_SIZE + 1),
+      (uintptr_t) (tcpopts + j * BATCH_SIZE + 2), (uintptr_t) (tcpopts + j * BATCH_SIZE + 3), (uintptr_t) (tcpopts + j * BATCH_SIZE + 4),
+      (uintptr_t) (tcpopts + j * BATCH_SIZE + 5), (uintptr_t) (tcpopts + j * BATCH_SIZE + 6), (uintptr_t) (tcpopts + j * BATCH_SIZE + 7)  
+    );
+    __m512i freebuf_vec = _mm512_set_epi64((uintptr_t) (freebuf + j * BATCH_SIZE), (uintptr_t) (freebuf + j * BATCH_SIZE + 1),
+      (uintptr_t) (freebuf + j * BATCH_SIZE + 2), (uintptr_t) (freebuf + j * BATCH_SIZE + 3), (uintptr_t) (freebuf + j * BATCH_SIZE + 4),
+      (uintptr_t) (freebuf + j * BATCH_SIZE + 5), (uintptr_t) (freebuf + j * BATCH_SIZE + 6), (uintptr_t) (freebuf + j * BATCH_SIZE + 7)  
+    );
+    int my_n = n - j * BATCH_SIZE;
+    __mmask8 mask = _cvtu32_mask8((1 << my_n) - 1);
+
   /* prefetch packet contents (1st cache line) */
+  /*
   for (i = 0; i < n; i++) {
     rte_prefetch0(network_buf_bufoff(bhs[i]));
   }
+  */
 
   /* look up flow states */
-  fast_flows_packet_fss(ctx, bhs, fss, n);
+  //fast_flows_packet_fss(ctx, bhs, fss, n);
+    fast_flows_packet_fss_vec(ctx_vec, bhs_vec, fss_vec, mask);
 
   /* prefetch packet contents (2nd cache line, TS opt overlaps) */
+  /*
   for (i = 0; i < n; i++) {
     rte_prefetch0(network_buf_bufoff(bhs[i]) + 64);
   }
+  */
 
   /* parse packets */
-  fast_flows_packet_parse(ctx, bhs, fss, tcpopts, n);
+  //fast_flows_packet_parse(ctx, bhs, fss, tcpopts, n);
+    fast_flows_packet_parse_vec(ctx_vec, bhs_vec, fss_vec, tcpopts_vec, mask);
 
-  for (i = 0; i < n; i++) {
-    /* run fast-path for flows with flow state */
-    if (fss[i] != NULL) {
-      ret = fast_flows_packet(ctx, bhs[i], fss[i], &tcpopts[i], ts);
-    } else {
-      ret = -1;
+    __m512i conflicts = _mm512_conflict_epi64(fss_vec);
+    __mmask8 masks[8] = { mask,  _cvtu32_mask8(0) , _cvtu32_mask8(0), _cvtu32_mask8(0), _cvtu32_mask8(0), _cvtu32_mask8(0), _cvtu32_mask8(0), _cvtu32_mask8(0) };
+    unsigned long long conflict_array[8];
+    char handled[8] = {0};
+    char used[8] = {1, 0};
+    _mm512_storeu_epi64((void*)(conflict_array), conflicts);
+    for (int i = 0; i < 8; i++) {
+      unsigned long long filtered = conflict_array[i] & (~ (1 << i));
+      if (filtered != 0 && handled[i] == 0) {
+        int ctr = 1;
+        for (int j = 0; j < 8; j++) {
+          if ((filtered & (1 << j)) && handled[j] == 0) {
+            __mmask8 tmp = _cvtu32_mask8(1 << j);
+            masks[ctr] = _kor_mask8(masks[ctr], tmp);
+            masks[0] = _kandn_mask8(tmp, masks[0]);
+            used[ctr] = 1;
+            handled[j] = 1;
+          }
+        }
+      }
+      handled[i] = 1;
     }
 
+    for (i = 0; i < n; i++) {
+      if (used[i] == 0) {
+        break;
+      }
+      __m256i ret_vec;
+      __mmask8 cmp = _mm512_cmpneq_epi64_mask(fss_vec, _mm512_set1_epi64(0));
+      __mmask8 if_mask = _kand_mask8(cmp, masks[i]);
+      __m256i ts_vec = _mm256_set1_epi32(ts);
+      /* run fast-path for flows with flow state */
+      /*
+      if (fss[i] != NULL) {
+        ret = fast_flows_packet(ctx, bhs[i], fss[i], &tcpopts[i], ts);
+      } else {
+        ret = -1;
+      }*/
+      ret_vec = _mm256_blend_epi32(fast_flows_packet_vec(ctx_vec, bhs_vec, fss_vec, tcpopts_vec, ts_vec, if_mask), _mm256_set1_epi32(-1), if_mask);
+
+      cmp = _mm256_cmpgt_epi64_mask(ret_vec, _mm256_set1_epi32(0));
+      if_mask = _kand_mask8(cmp, masks[i]);
+      _mm512_mask_i64scatter_epi8_custom(if_mask, freebuf_vec, _mm256_set1_epi32(1));
+      cmp = _kandn_mask8(cmp, _mm256_cmplt_epi64_mask(ret_vec, _mm256_set1_epi32(0)));
+      if_mask = _kand_mask(cmp, masks[i]);
+      fast_kernel_packet_vec(ctx_vec, bhs_vec, if_mask);
+
+      /*
     if (ret > 0) {
       freebuf[i] = 1;
     } else if (ret < 0) {
       fast_kernel_packet(ctx, bhs[i]);
     }
+      */
+  }
+
   }
 
   arx_cache_flush(ctx, tsc);

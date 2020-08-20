@@ -8,7 +8,8 @@ POSTCOMPILE_DEPS = mv -f $(@:.o=.Td) $(@:.o=.d)
 COMPILE.c = $(CC) $(DEPFLAGS) $(CFLAGS) $(CPPFLAGS) -c
 %.o: %.c
 %.o: %.c %.d
-	$(COMPILE.c) $(OUTPUT_OPTION.c) $<
+	$(VECTORIZER) $< -m -o $(<:.c=.vc) -- $(CFLAGS) $(CPPFLAGS)
+	$(COMPILE.c) $(OUTPUT_OPTION.c) $(<:.c=.vc)
 	@$(POSTCOMPILE_DEPS)
 
 # Compile C to position independent object file while generating dependency
