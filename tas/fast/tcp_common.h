@@ -27,6 +27,7 @@
 
 #include <tas_memif.h>
 #include <utils.h>
+#include <intrinhelper.h>
 
 #define ALLOW_FUTURE_ACKS 1
 
@@ -119,6 +120,7 @@ static inline int tcp_valid_rxseq(struct flextcp_pl_flowst *fs,
  *
  * @return 0 if packet should be processed, != 0 to drop.
  */
+#pragma vectorize
 static inline int tcp_trim_rxbuf(struct flextcp_pl_flowst *fs,
     uint32_t pkt_seq, uint16_t pkt_bytes, uint16_t *trim_start,
     uint16_t *trim_end)
@@ -177,6 +179,7 @@ static inline int tcp_trim_rxbuf(struct flextcp_pl_flowst *fs,
  *
  * @return 0 if ack is valid, != 0 otherwise
  */
+#pragma vectorize
 static inline int tcp_valid_rxack(struct flextcp_pl_flowst *fs, uint32_t ack,
     uint32_t *bump)
 {
@@ -211,10 +214,11 @@ static inline int tcp_valid_rxack(struct flextcp_pl_flowst *fs, uint32_t ack,
  *
  * @return Bytes that can be sent.
  */
+#pragma vectorize
 static inline uint32_t tcp_txavail(const struct flextcp_pl_flowst *fs,
     const uint32_t *pavail)
 {
-  uint32_t buf_avail, fc_avail;
+  uint32_t buf_avail = 0, fc_avail = 0;
 
   buf_avail = (pavail != NULL ? *pavail : fs->tx_avail);
 
@@ -240,6 +244,7 @@ struct tcp_opts {
  *
  * @return 0 if parsed successful, -1 otherwise.
  */
+#pragma vectorize to_scalar
 static inline int tcp_parse_options(const struct pkt_tcp *p, uint16_t len,
     struct tcp_opts *opts)
 {
@@ -252,7 +257,7 @@ static inline int tcp_parse_options(const struct pkt_tcp *p, uint16_t len,
 
   /* whole header not in buf */
   if (TCPH_HDRLEN(&p->tcp) < 5 || opts_len > (len - sizeof(*p))) {
-    fprintf(stderr, "hlen=%u opts_len=%u len=%u so=%zu\n", TCPH_HDRLEN(&p->tcp), opts_len, len, sizeof(*p));
+    //fprintf(stderr, "hlen=%u opts_len=%u len=%u so=%zu\n", TCPH_HDRLEN(&p->tcp), opts_len, len, sizeof(*p));
     return -1;
   }
 
@@ -268,14 +273,14 @@ static inline int tcp_parse_options(const struct pkt_tcp *p, uint16_t len,
     } else {
       /* variable length option */
       if (opt_avail < 2) {
-        fprintf(stderr, "parse_options: opt_avail=%u kind=%u off=%u\n", opt_avail, opt_kind,  off);
+        //fprintf(stderr, "parse_options: opt_avail=%u kind=%u off=%u\n", opt_avail, opt_kind,  off);
         return -1;
       }
 
       opt_len = opt[off + 1];
       if (opt_kind == TCP_OPT_TIMESTAMP) {
         if (opt_len != sizeof(struct tcp_timestamp_opt)) {
-          fprintf(stderr, "parse_options: opt_len=%u so=%zu\n", opt_len, sizeof(struct tcp_timestamp_opt));
+          //fprintf(stderr, "parse_options: opt_len=%u so=%zu\n", opt_len, sizeof(struct tcp_timestamp_opt));
           return -1;
         }
 

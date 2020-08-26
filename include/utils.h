@@ -27,6 +27,7 @@
 
 #include <stdint.h>
 #include <arpa/inet.h>
+#include <intrinhelper.h>
 
 #define MIN(a,b) ((b) < (a) ? (b) : (a))
 #define MAX(a,b) ((b) > (a) ? (b) : (a))
@@ -48,20 +49,28 @@ typedef uint16_t beui16_t;
 typedef uint32_t beui32_t;
 typedef uint64_t beui64_t;
 
+#pragma vectorize to_scalar
 static inline uint16_t f_beui16(beui16_t x) { return __builtin_bswap16(x); }
+
+#pragma vectorize to_scalar
 static inline uint32_t f_beui32(beui32_t x) { return __builtin_bswap32(x); }
+
+#pragma vectorize to_scalar
 static inline uint64_t f_beui64(beui64_t x) { return __builtin_bswap64(x); }
 
+#pragma vectorize to_scalar
 static inline beui16_t t_beui16(uint16_t x)
 {
   return __builtin_bswap16(x);
 }
 
+#pragma vectorize to_scalar
 static inline beui32_t t_beui32(uint32_t x)
 {
   return __builtin_bswap32(x);
 }
 
+#pragma vectorize to_scalar
 static inline beui64_t t_beui64(uint64_t x)
 {
   return __builtin_bswap64(x);

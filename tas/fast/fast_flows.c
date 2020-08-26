@@ -57,25 +57,38 @@ struct flow_key {
 #endif
 
 
+#pragma vectorize
 static void flow_tx_read(struct flextcp_pl_flowst *fs, uint32_t pos,
     uint16_t len, void *dst);
+#pragma vectorize
 static void flow_rx_write(struct flextcp_pl_flowst *fs, uint32_t pos,
     uint16_t len, const void *src);
 #ifdef FLEXNIC_PL_OOO_RECV
+#pragma vectorize
 static void flow_rx_seq_write(struct flextcp_pl_flowst *fs, uint32_t seq,
     uint16_t len, const void *src);
 #endif
+#pragma vectorize
 static void flow_tx_segment(struct dataplane_context *ctx,
     struct network_buf_handle *nbh, struct flextcp_pl_flowst *fs,
     uint32_t seq, uint32_t ack, uint32_t rxwnd, uint16_t payload,
     uint32_t payload_pos, uint32_t ts_echo, uint32_t ts_my, uint8_t fin);
+#pragma vectorize
 static void flow_tx_ack(struct dataplane_context *ctx, uint32_t seq,
     uint32_t ack, uint32_t rxwnd, uint32_t echo_ts, uint32_t my_ts,
     struct network_buf_handle *nbh, struct tcp_timestamp_opt *ts_opt);
+#pragma vectorize
 static void flow_reset_retransmit(struct flextcp_pl_flowst *fs);
 
+#pragma vectorize
 static inline void tcp_checksums(struct network_buf_handle *nbh,
     struct pkt_tcp *p, beui32_t ip_s, beui32_t ip_d, uint16_t l3_paylen);
+
+
+__m256i __bswap_16_vec(__m256i data, __mmask8 k) {
+  __m256i lower = _mm256_slli_epi32(_mm256_and_si256(data, _mm256_set1_epi32(0xFF)), 8);
+  return _mm256_or_si256(_mm256_srli_epi32(data, 8), lower);
+}
 
 void fast_flows_qman_pf(struct dataplane_context *ctx, uint32_t *queues,
     uint16_t n)
@@ -102,6 +115,15 @@ void fast_flows_qman_pfbufs(struct dataplane_context *ctx, uint32_t *queues,
   }
 }
 
+#pragma vectorize to_scalar
+static int rte_ring_enqueue_wrapper(struct rte_ring *r, void *obj) {
+  return rte_ring_enqueue(r, obj);
+}
+
+#pragma vectorize to_scalar
+void notify_fastpath_core_wrapper(unsigned core) {
+  notify_fastpath_core(core);
+}
 
 #pragma vectorize
 int fast_flows_qman(struct dataplane_context *ctx, uint32_t queue,
@@ -123,7 +145,7 @@ int fast_flows_qman(struct dataplane_context *ctx, uint32_t queue,
         "%u -> %u (fs=%p, fg=%u)\n", ctx->id, new_core, fs, fs->flow_group);*/
 
     /* enqueue flo state on forwarding queue */
-    if (rte_ring_enqueue(ctxs[new_core]->qman_fwd_ring, fs) != 0) {
+    if (rte_ring_enqueue_wrapper(ctxs[new_core]->qman_fwd_ring, fs) != 0) {
       fprintf(stderr, "fast_flows_qman: rte_ring_enqueue failed\n");
       abort();
     }
@@ -136,7 +158,7 @@ int fast_flows_qman(struct dataplane_context *ctx, uint32_t queue,
       abort();
     }
 
-    notify_fastpath_core(new_core);
+    notify_fastpath_core_wrapper(new_core);
 
     ret = -1;
     goto unlock;
@@ -234,7 +256,7 @@ void fast_flows_packet_parse(struct dataplane_context *ctx,
     struct network_buf_handle *nbhs, void **fss, struct tcp_opts *tos)
 {
   struct pkt_tcp *p;
-  uint16_t i, len;
+  uint16_t len;
 
   //for (i = 0; i < n; i++) {
     if (*fss == NULL)
@@ -263,7 +285,6 @@ void fast_flows_packet_parse(struct dataplane_context *ctx,
 void fast_flows_packet_pfbufs(struct dataplane_context *ctx,
     void *fss, uint16_t n)
 {
-  uint16_t i;
   uint64_t rx_base;
   void *p;
   struct flextcp_pl_flowst *fs;
@@ -273,7 +294,7 @@ void fast_flows_packet_pfbufs(struct dataplane_context *ctx,
   fs = fss;
   rx_base = fs->rx_base_sp & FLEXNIC_PL_FLOWST_RX_MASK;
   p = dma_pointer(rx_base + fs->rx_next_pos, 1);
-  rte_prefetch0(p);
+  //rte_prefetch0(p);
 }
 
 /* Received packet */
@@ -357,8 +378,9 @@ int fast_flows_packet(struct dataplane_context *ctx,
       /* for SYN/SYN-ACK we'll let the kernel handle them out of band */
       no_permanent_sp = 1;
     } else {
-      fprintf(stderr, "dma_krx_pkt_fastpath: slow path because of flags (%x)\n",
-          TCPH_FLAGS(&p->tcp));
+      //fprintf(stderr, "dma_krx_pkt_fastpath: slow path because of flags (%x)\n",
+      //    TCPH_FLAGS(&p->tcp));
+      fprintf(stderr, "dma_krx_pkt_fastpath: slow path because of flags\n");
     }
     goto slowpath;
   }
@@ -869,6 +891,7 @@ static void flow_rx_write(struct flextcp_pl_flowst *fs, uint32_t pos,
 }
 
 #ifdef FLEXNIC_PL_OOO_RECV
+#pragma vectorize
 static void flow_rx_seq_write(struct flextcp_pl_flowst *fs, uint32_t seq,
     uint16_t len, const void *src)
 {
@@ -876,7 +899,7 @@ static void flow_rx_seq_write(struct flextcp_pl_flowst *fs, uint32_t seq,
   uint32_t pos = fs->rx_next_pos + diff;
   if (pos >= fs->rx_len)
     pos -= fs->rx_len;
-  assert(pos < fs->rx_len);
+  //assert(pos < fs->rx_len);
   flow_rx_write(fs, pos, len, src);
 }
 #endif
@@ -1065,6 +1088,7 @@ static void flow_reset_retransmit(struct flextcp_pl_flowst *fs)
   fs->cnt_tx_drops++;
 }
 
+#pragma vectorize to_scalar
 static inline void tcp_checksums(struct network_buf_handle *nbh,
     struct pkt_tcp *p, beui32_t ip_s, beui32_t ip_d, uint16_t l3_paylen)
 {
@@ -1085,6 +1109,7 @@ void fast_flows_kernelxsums(struct network_buf_handle *nbh,
       f_beui16(p->ip.len) - sizeof(p->ip));
 }
 
+#pragma vectorize to_scalar
 static inline uint32_t flow_hash(struct flow_key *k)
 {
   return crc32c_sse42_u32(k->local_port | (((uint32_t) k->remote_port) << 16),
@@ -1097,7 +1122,6 @@ void fast_flows_packet_fss(struct dataplane_context *ctx,
 {
   uint32_t hash;
   uint32_t k, j, eh, fid, ffid;
-  uint16_t i;
   struct pkt_tcp *p;
   struct flow_key key;
   struct flextcp_pl_flowhte *e;
@@ -1135,7 +1159,7 @@ void fast_flows_packet_fss(struct dataplane_context *ctx,
         continue;
       }
 
-      rte_prefetch0(&fp_state->flowst[fid]);
+      //rte_prefetch0(&fp_state->flowst[fid]);
     }
   //}
 
@@ -1164,7 +1188,7 @@ void fast_flows_packet_fss(struct dataplane_context *ctx,
           (fs->local_port == p->tcp.dest) &
           (fs->remote_port == p->tcp.src))
       {
-        rte_prefetch0((uint8_t *) fs + 64);
+        //rte_prefetch0((uint8_t *) fs + 64);
         *fss = &fp_state->flowst[fid];
         break;
       }

@@ -81,6 +81,7 @@ void fast_flows_retransmit(struct dataplane_context *ctx, uint32_t flow_id);
 /*****************************************************************************/
 /* Helpers */
 
+#pragma vectorize
 static inline void tx_send(struct dataplane_context *ctx,
     struct network_buf_handle *nbh, uint16_t off, uint16_t len)
 {
@@ -104,6 +105,7 @@ static inline uint16_t tx_xsum_enable(struct network_buf_handle *nbh,
       ip_s, ip_d, IP_PROTO_TCP, l3_paylen);
 }
 
+#pragma vectorize to_scalar
 static inline void arx_cache_add(struct dataplane_context *ctx, uint16_t ctx_id,
     uint64_t opaque, uint32_t rx_bump, uint32_t rx_pos, uint32_t tx_bump,
     uint16_t type_flags)

@@ -36,6 +36,7 @@
 void dma_dump_stats(void);
 #endif
 
+#pragma vectorize to_scalar
 static inline void dma_read(uintptr_t addr, size_t len, void *buf)
 {
   assert(addr + len >= addr && addr + len <= config.shm_len);
@@ -52,6 +53,7 @@ static inline void dma_read(uintptr_t addr, size_t len, void *buf)
 #endif
 }
 
+#pragma vectorize to_scalar
 static inline void dma_write(uintptr_t addr, size_t len, const void *buf)
 {
   assert(addr + len >= addr && addr + len <= config.shm_len);
@@ -68,10 +70,11 @@ static inline void dma_write(uintptr_t addr, size_t len, const void *buf)
 #endif
 }
 
+#pragma vectorize
 static inline void *dma_pointer(uintptr_t addr, size_t len)
 {
   /* validate address */
-  assert(addr + len >= addr && addr + len <= config.shm_len);
+  //assert(addr + len >= addr && addr + len <= config.shm_len);
 
   return (uint8_t *) tas_shm + addr;
 }

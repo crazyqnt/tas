@@ -364,13 +364,13 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
       } else {
         ret = -1;
       }*/
-      ret_vec = _mm256_blend_epi32(fast_flows_packet_vec(ctx_vec, bhs_vec, fss_vec, tcpopts_vec, ts_vec, if_mask), _mm256_set1_epi32(-1), if_mask);
+      ret_vec = _mm256_mask_mov_epi32(_mm256_set1_epi32(-1), if_mask, fast_flows_packet_vec(ctx_vec, bhs_vec, fss_vec, tcpopts_vec, ts_vec, if_mask));
 
       cmp = _mm256_cmpgt_epi64_mask(ret_vec, _mm256_set1_epi32(0));
       if_mask = _kand_mask8(cmp, masks[i]);
       _mm512_mask_i64scatter_epi8_custom(if_mask, freebuf_vec, _mm256_set1_epi32(1));
       cmp = _kandn_mask8(cmp, _mm256_cmplt_epi64_mask(ret_vec, _mm256_set1_epi32(0)));
-      if_mask = _kand_mask(cmp, masks[i]);
+      if_mask = _kand_mask8(cmp, masks[i]);
       fast_kernel_packet_vec(ctx_vec, bhs_vec, if_mask);
 
       /*
@@ -380,7 +380,7 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
       fast_kernel_packet(ctx, bhs[i]);
     }
       */
-  }
+    }
 
   }
 

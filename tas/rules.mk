@@ -24,7 +24,7 @@ $(exec): LDLIBS += $(DPDK_LDLIBS)
 $(exec): $(TAS_OBJS) $(LIB_UTILS_OBJS)
 
 DEPS += $(TAS_OBJS:.o=.d)
-CLEAN += $(TAS_OBJS) $(exec)
+CLEAN += $(TAS_OBJS) $(exec) $(TAS_OBJS:.o=.vc)
 TARGETS += $(exec)
 
 include mk/subdir_post.mk

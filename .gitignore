@@ -4,6 +4,7 @@
 *.swp
 *.swo
 *.json
+*.vc
 tas/tas
 tests/bench_ll_echo
 tests/lowlevel

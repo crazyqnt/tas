@@ -38,7 +38,9 @@
 #define UTILS_SYNC_H_
 
 #include <stdint.h>
+#include <intrinhelper.h>
 
+#pragma vectorize to_scalar
 static inline void util_spin_lock(volatile uint32_t *sl)
 {
   uint32_t lock_val = 1;
@@ -59,6 +61,7 @@ static inline void util_spin_lock(volatile uint32_t *sl)
       : "memory");
 }
 
+#pragma vectorize to_scalar
 static inline void util_spin_unlock(volatile uint32_t *sl)
 {
   uint32_t unlock_val = 0;
@@ -70,6 +73,7 @@ static inline void util_spin_unlock(volatile uint32_t *sl)
       : "memory");
 }
 
+#pragma vectorize to_scalar
 static inline int util_spin_trylock(volatile uint32_t *sl)
 {
   uint32_t lockval = 1;

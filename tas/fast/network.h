@@ -34,6 +34,8 @@
 
 #include <fastpath.h>
 
+#include <intrinhelper.h>
+
 struct network_buf_handle;
 
 extern uint8_t net_port_id;
@@ -52,33 +54,39 @@ static inline void network_buf_reset(struct network_buf_handle *bh)
   mb->ol_flags = 0;
 }
 
+#pragma vectorize
 static inline uint16_t network_buf_off(struct network_buf_handle *bh)
 {
   return ((struct rte_mbuf *) bh)->data_off;
 }
 
+#pragma vectorize
 static inline uint16_t network_buf_len(struct network_buf_handle *bh)
 {
   return ((struct rte_mbuf *) bh)->data_len;
 }
 
+#pragma vectorize
 static inline void *network_buf_buf(struct network_buf_handle *bh)
 {
   return ((struct rte_mbuf *) bh)->buf_addr;
 }
 
+#pragma vectorize
 static inline void *network_buf_bufoff(struct network_buf_handle *bh)
 {
   struct rte_mbuf *mb = (struct rte_mbuf *) bh;
   return mb->buf_addr + mb->data_off;
 }
 
+#pragma vectorize
 static inline void network_buf_setoff(struct network_buf_handle *bh,
     uint16_t off)
 {
   ((struct rte_mbuf *) bh)->data_off = off;
 }
 
+#pragma vectorize
 static inline void network_buf_setlen(struct network_buf_handle *bh,
     uint16_t len)
 {

@@ -95,6 +95,8 @@ int fast_kernel_poll(struct dataplane_context *ctx,
   return ret;
 }
 
+#pragma GCC diagnostic ignored "-Waddress-of-packed-member"
+
 #pragma vectorize to_scalar
 void fast_kernel_packet(struct dataplane_context *ctx,
     struct network_buf_handle *nbh)

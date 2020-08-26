@@ -74,6 +74,8 @@ STATIC_ASSERT((sizeof(struct queue) == 32), queue_size);
 /** Actually update queue state: must run on queue's home core */
 static inline void set_impl(struct qman_thread *t, uint32_t id, uint32_t rate,
     uint32_t avail, uint16_t max_chunk, uint8_t flags);
+static inline void set_impl_vec(__m512i, __m256i, __m256i,
+    __m256i, __m256i, __m256i, __mmask8);
 
 /** Add queue to the no limit list */
 static inline void queue_activate_nolimit(struct qman_thread *t,
@@ -92,6 +94,7 @@ static inline void queue_fire(struct qman_thread *t,
     struct queue *q, uint32_t idx, unsigned *q_id, uint16_t *q_bytes);
 static inline void queue_activate(struct qman_thread *t, struct queue *q,
     uint32_t idx);
+static inline void queue_activate_vec(__m512i, __m512i, __m256i, __mmask8);
 static inline uint32_t timestamp(void);
 static inline int timestamp_lessthaneq(struct qman_thread *t, uint32_t a,
     uint32_t b);
@@ -181,6 +184,7 @@ int qman_poll(struct qman_thread *t, unsigned num, unsigned *q_ids,
   return x + y;
 }
 
+#pragma vectorize
 int qman_set(struct qman_thread *t, uint32_t id, uint32_t rate, uint32_t avail,
     uint16_t max_chunk, uint8_t flags)
 {
@@ -192,12 +196,12 @@ int qman_set(struct qman_thread *t, uint32_t id, uint32_t rate, uint32_t avail,
   trace_event(FLEXNIC_TRACE_EV_QMSET, sizeof(evt), &evt);
 #endif
 
-  dprintf("qman_set: id=%u rate=%u avail=%u max_chunk=%u qidx=%u tid=%u\n",
-      id, rate, avail, max_chunk, qidx, tid);
+  //dprintf("qman_set: id=%u rate=%u avail=%u max_chunk=%u qidx=%u tid=%u\n",
+  //    id, rate, avail, max_chunk, qidx, tid);
 
   if (id >= FLEXNIC_NUM_QMQUEUES) {
-    fprintf(stderr, "qman_set: invalid queue id: %u >= %u\n", id,
-        FLEXNIC_NUM_QMQUEUES);
+    //fprintf(stderr, "qman_set: invalid queue id: %u >= %u\n", id,
+    //    FLEXNIC_NUM_QMQUEUES);
     return -1;
   }
 
@@ -207,6 +211,7 @@ int qman_set(struct qman_thread *t, uint32_t id, uint32_t rate, uint32_t avail,
 }
 
 /** Actually update queue state: must run on queue's home core */
+#pragma vectorize
 static void inline set_impl(struct qman_thread *t, uint32_t idx, uint32_t rate,
     uint32_t avail, uint16_t max_chunk, uint8_t flags)
 {
@@ -229,7 +234,7 @@ static void inline set_impl(struct qman_thread *t, uint32_t idx, uint32_t rate,
     new_avail = 1;
   }
 
-  dprintf("set_impl: t=%p q=%p idx=%u avail=%u rate=%u qflags=%x flags=%x\n", t, q, idx, q->avail, q->rate, q->flags, flags);
+  //dprintf("set_impl: t=%p q=%p idx=%u avail=%u rate=%u qflags=%x flags=%x\n", t, q, idx, q->avail, q->rate, q->flags, flags);
 
   if (new_avail && q->avail > 0
       && ((q->flags & (FLAG_INSKIPLIST | FLAG_INNOLIMITL)) == 0)) {
@@ -241,14 +246,15 @@ static void inline set_impl(struct qman_thread *t, uint32_t idx, uint32_t rate,
 /* Managing no-limit queues */
 
 /** Add queue to the no limit list */
+#pragma vectorize
 static inline void queue_activate_nolimit(struct qman_thread *t,
     struct queue *q, uint32_t idx)
 {
-  struct queue *q_tail;
+  struct queue *q_tail = NULL;
 
-  assert((q->flags & (FLAG_INSKIPLIST | FLAG_INNOLIMITL)) == 0);
+  //assert((q->flags & (FLAG_INSKIPLIST | FLAG_INNOLIMITL)) == 0);
 
-  dprintf("queue_activate_nolimit: t=%p q=%p avail=%u rate=%u flags=%x\n", t, q, q->avail, q->rate, q->flags);
+  //dprintf("queue_activate_nolimit: t=%p q=%p avail=%u rate=%u flags=%x\n", t, q, q->avail, q->rate, q->flags);
 
   q->flags |= FLAG_INNOLIMITL;
   q->next_idxs[0] = IDXLIST_INVAL;
@@ -299,6 +305,7 @@ static inline uint32_t queue_new_ts(struct qman_thread *t, struct queue *q,
 }
 
 /** Add queue to the skip list list */
+#pragma vectorize to_scalar
 static inline void queue_activate_skiplist(struct qman_thread *t,
     struct queue *q, uint32_t q_idx)
 {
@@ -466,6 +473,7 @@ static inline void queue_fire(struct qman_thread *t,
 #endif
 }
 
+#pragma vectorize
 static inline void queue_activate(struct qman_thread *t, struct queue *q,
     uint32_t idx)
 {

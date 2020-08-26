@@ -9,7 +9,7 @@ COMPILE.c = $(CC) $(DEPFLAGS) $(CFLAGS) $(CPPFLAGS) -c
 %.o: %.c
 %.o: %.c %.d
 	$(VECTORIZER) $< -m -o $(<:.c=.vc) -- $(CFLAGS) $(CPPFLAGS)
-	$(COMPILE.c) $(OUTPUT_OPTION.c) $(<:.c=.vc)
+	$(COMPILE.c) $(OUTPUT_OPTION.c) -x c $(<:.c=.vc)
 	@$(POSTCOMPILE_DEPS)
 
 # Compile C to position independent object file while generating dependency

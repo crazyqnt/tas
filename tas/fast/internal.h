@@ -68,6 +68,8 @@ int qman_poll(struct qman_thread *t, unsigned num, unsigned *q_ids,
     uint16_t *q_bytes);
 int qman_set(struct qman_thread *t, uint32_t id, uint32_t rate, uint32_t avail,
     uint16_t max_chunk, uint8_t flags);
+__m256i qman_set_vec(__m512i, __m256i, __m256i, __m256i,
+    __m256i, __m256i, __mmask8);
 uint32_t qman_next_ts(struct qman_thread *t, uint32_t cur_ts);
 
 void *util_create_shmsiszed(const char *name, size_t size, void *addr);
