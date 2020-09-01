@@ -290,19 +290,19 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
     }
     __m512i ctx_vec = _mm512_set1_epi64((uintptr_t) ctx);
     __m512i bhs_vec = _mm512_loadu_epi64(bhs);
-    __m512i fss_vec = _mm512_set_epi64((uintptr_t) (fss + j * VEC_WIDTH), (uintptr_t) (fss + j * VEC_WIDTH + 1),
-      (uintptr_t) (fss + j * VEC_WIDTH + 2), (uintptr_t) (fss + j * VEC_WIDTH + 3), (uintptr_t) (fss + j * VEC_WIDTH + 4),
-      (uintptr_t) (fss + j * VEC_WIDTH + 5), (uintptr_t) (fss + j * VEC_WIDTH + 6), (uintptr_t) (fss + j * VEC_WIDTH + 7)  
+    __m512i fss_vec = _mm512_set_epi64((uintptr_t) (fss + j * VEC_WIDTH + 7), (uintptr_t) (fss + j * VEC_WIDTH + 6),
+      (uintptr_t) (fss + j * VEC_WIDTH + 5), (uintptr_t) (fss + j * VEC_WIDTH + 4), (uintptr_t) (fss + j * VEC_WIDTH + 3),
+      (uintptr_t) (fss + j * VEC_WIDTH + 2), (uintptr_t) (fss + j * VEC_WIDTH + 1), (uintptr_t) (fss + j * VEC_WIDTH + 0)  
     );
-    __m512i tcpopts_vec = _mm512_set_epi64((uintptr_t) (tcpopts + j * VEC_WIDTH), (uintptr_t) (tcpopts + j * VEC_WIDTH + 1),
-      (uintptr_t) (tcpopts + j * VEC_WIDTH + 2), (uintptr_t) (tcpopts + j * VEC_WIDTH + 3), (uintptr_t) (tcpopts + j * VEC_WIDTH + 4),
-      (uintptr_t) (tcpopts + j * VEC_WIDTH + 5), (uintptr_t) (tcpopts + j * VEC_WIDTH + 6), (uintptr_t) (tcpopts + j * VEC_WIDTH + 7)  
+    __m512i tcpopts_vec = _mm512_set_epi64((uintptr_t) (tcpopts + j * VEC_WIDTH + 7), (uintptr_t) (tcpopts + j * VEC_WIDTH + 6),
+      (uintptr_t) (tcpopts + j * VEC_WIDTH + 5), (uintptr_t) (tcpopts + j * VEC_WIDTH + 4), (uintptr_t) (tcpopts + j * VEC_WIDTH + 3),
+      (uintptr_t) (tcpopts + j * VEC_WIDTH + 2), (uintptr_t) (tcpopts + j * VEC_WIDTH + 1), (uintptr_t) (tcpopts + j * VEC_WIDTH + 0)  
     );
-    __m512i freebuf_vec = _mm512_set_epi64((uintptr_t) (freebuf + j * VEC_WIDTH), (uintptr_t) (freebuf + j * VEC_WIDTH + 1),
-      (uintptr_t) (freebuf + j * VEC_WIDTH + 2), (uintptr_t) (freebuf + j * VEC_WIDTH + 3), (uintptr_t) (freebuf + j * VEC_WIDTH + 4),
-      (uintptr_t) (freebuf + j * VEC_WIDTH + 5), (uintptr_t) (freebuf + j * VEC_WIDTH + 6), (uintptr_t) (freebuf + j * VEC_WIDTH + 7)  
+    __m512i freebuf_vec = _mm512_set_epi64((uintptr_t) (freebuf + j * VEC_WIDTH + 7), (uintptr_t) (freebuf + j * VEC_WIDTH + 6),
+      (uintptr_t) (freebuf + j * VEC_WIDTH + 5), (uintptr_t) (freebuf + j * VEC_WIDTH + 4), (uintptr_t) (freebuf + j * VEC_WIDTH + 3),
+      (uintptr_t) (freebuf + j * VEC_WIDTH + 2), (uintptr_t) (freebuf + j * VEC_WIDTH + 1), (uintptr_t) (freebuf + j * VEC_WIDTH + 0)  
     );
-    int my_n = n - j * VEC_WIDTH;
+    int my_n = MIN(VEC_WIDTH, (n - j * VEC_WIDTH));
     __mmask8 mask = _cvtu32_mask8((1 << my_n) - 1);
 
   /* prefetch packet contents (1st cache line) */
@@ -316,7 +316,7 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
   //fast_flows_packet_fss(ctx, bhs, fss, n);
     fast_flows_packet_fss_vec(ctx_vec, bhs_vec, fss_vec, mask);
     //printf("FSS: ");
-    //d_print_512i(_mm512_mask_i64gather_epi64(_mm512_set1_epi64(1), mask, fss_vec, NULL, 1), mask);
+    //d_print_512u(_mm512_mask_i64gather_epi64(_mm512_set1_epi64(1), mask, fss_vec, NULL, 1), mask);
 
   /* prefetch packet contents (2nd cache line, TS opt overlaps) */
   /*
@@ -329,7 +329,7 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
   //fast_flows_packet_parse(ctx, bhs, fss, tcpopts, n);
     fast_flows_packet_parse_vec(ctx_vec, bhs_vec, fss_vec, tcpopts_vec, mask);
     //printf("FSS post parse: ");
-    //d_print_512i(_mm512_mask_i64gather_epi64(_mm512_set1_epi64(1), mask, fss_vec, NULL, 1), mask);
+    //d_print_512u(_mm512_mask_i64gather_epi64(_mm512_set1_epi64(1), mask, fss_vec, NULL, 1), mask);
 
     __m512i fss_loaded = _mm512_mask_i64gather_epi64(_mm512_setzero_si512(), mask, fss_vec, NULL, 1);
     __m512i conflicts = _mm512_conflict_epi64(fss_loaded);
@@ -343,7 +343,8 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
       masks[i] = _kand_mask8(_mm512_cmpeq_epi64_mask(popcnt, _mm512_set1_epi64(i)), mask_and_notzero);
     }
 
-    for (i = 0; i < n; i++) {
+    for (i = 0; i < my_n; i++) {
+
       if (_cvtmask8_u32(masks[i]) == 0) {
         break;
       }
@@ -365,10 +366,10 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
         )
       );
 
-      cmp = _mm256_cmpgt_epi64_mask(ret_vec, _mm256_set1_epi32(0));
+      cmp = _mm256_cmpgt_epi32_mask(ret_vec, _mm256_set1_epi32(0));
       if_mask = _kand_mask8(cmp, masks[i]);
       _mm512_mask_i64scatter_epi8_custom(if_mask, freebuf_vec, _mm256_set1_epi32(1));
-      cmp = _kandn_mask8(cmp, _mm256_cmplt_epi64_mask(ret_vec, _mm256_set1_epi32(0)));
+      cmp = _kandn_mask8(cmp, _mm256_cmplt_epi32_mask(ret_vec, _mm256_set1_epi32(0)));
       if_mask = _kand_mask8(cmp, masks[i]);
       fast_kernel_packet_vec(ctx_vec, bhs_vec, if_mask);
 
