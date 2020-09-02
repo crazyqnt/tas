@@ -81,7 +81,8 @@ void fast_flows_retransmit(struct dataplane_context *ctx, uint32_t flow_id);
 /*****************************************************************************/
 /* Helpers */
 
-#pragma vectorize
+// This code has side effects!
+#pragma vectorize to_scalar
 static inline void tx_send(struct dataplane_context *ctx,
     struct network_buf_handle *nbh, uint16_t off, uint16_t len)
 {

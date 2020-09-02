@@ -985,7 +985,7 @@ static void flow_tx_segment(struct dataplane_context *ctx,
   tx_send(ctx, nbh, 0, hdrs_len + payload);
 }
 
-#pragma vectorize
+#pragma vectorize alive_check
 static void flow_tx_ack(struct dataplane_context *ctx, uint32_t seq,
     uint32_t ack, uint32_t rxwnd, uint32_t echots, uint32_t myts,
     struct network_buf_handle *nbh, struct tcp_timestamp_opt *ts_opt)
