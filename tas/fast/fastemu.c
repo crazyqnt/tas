@@ -255,8 +255,6 @@ void dataplane_dump_stats(void)
 }
 #endif
 
-#define VEC_WIDTH 8
-
 static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
     uint64_t tsc)
 {
@@ -282,28 +280,24 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
   STATS_ADD(ctx, rx_total, n);
   n = ret;
 
-  //printf("Ok, here we go: %d\n", n);
+  //fprintf(stderr, "Ok, here we go: %d\n", n);
 
-  for (unsigned j = 0; j < BATCH_SIZE / VEC_WIDTH; j++) {
-    if (n <= j * VEC_WIDTH) {
-      break;
-    }
+  //for (unsigned j = 0; j < BATCH_SIZE; j++) {
     __m512i ctx_vec = _mm512_set1_epi64((uintptr_t) ctx);
     __m512i bhs_vec = _mm512_loadu_epi64(bhs);
-    __m512i fss_vec = _mm512_set_epi64((uintptr_t) (fss + j * VEC_WIDTH + 7), (uintptr_t) (fss + j * VEC_WIDTH + 6),
-      (uintptr_t) (fss + j * VEC_WIDTH + 5), (uintptr_t) (fss + j * VEC_WIDTH + 4), (uintptr_t) (fss + j * VEC_WIDTH + 3),
-      (uintptr_t) (fss + j * VEC_WIDTH + 2), (uintptr_t) (fss + j * VEC_WIDTH + 1), (uintptr_t) (fss + j * VEC_WIDTH + 0)  
+    __m512i fss_vec = _mm512_set_epi64((uintptr_t) (fss + 7), (uintptr_t) (fss + 6),
+      (uintptr_t) (fss + 5), (uintptr_t) (fss + 4), (uintptr_t) (fss + 3),
+      (uintptr_t) (fss + 2), (uintptr_t) (fss + 1), (uintptr_t) (fss + 0)  
     );
-    __m512i tcpopts_vec = _mm512_set_epi64((uintptr_t) (tcpopts + j * VEC_WIDTH + 7), (uintptr_t) (tcpopts + j * VEC_WIDTH + 6),
-      (uintptr_t) (tcpopts + j * VEC_WIDTH + 5), (uintptr_t) (tcpopts + j * VEC_WIDTH + 4), (uintptr_t) (tcpopts + j * VEC_WIDTH + 3),
-      (uintptr_t) (tcpopts + j * VEC_WIDTH + 2), (uintptr_t) (tcpopts + j * VEC_WIDTH + 1), (uintptr_t) (tcpopts + j * VEC_WIDTH + 0)  
+    __m512i tcpopts_vec = _mm512_set_epi64((uintptr_t) (tcpopts + 7), (uintptr_t) (tcpopts + 6),
+      (uintptr_t) (tcpopts + 5), (uintptr_t) (tcpopts + 4), (uintptr_t) (tcpopts + 3),
+      (uintptr_t) (tcpopts + 2), (uintptr_t) (tcpopts + 1), (uintptr_t) (tcpopts + 0)  
     );
-    __m512i freebuf_vec = _mm512_set_epi64((uintptr_t) (freebuf + j * VEC_WIDTH + 7), (uintptr_t) (freebuf + j * VEC_WIDTH + 6),
-      (uintptr_t) (freebuf + j * VEC_WIDTH + 5), (uintptr_t) (freebuf + j * VEC_WIDTH + 4), (uintptr_t) (freebuf + j * VEC_WIDTH + 3),
-      (uintptr_t) (freebuf + j * VEC_WIDTH + 2), (uintptr_t) (freebuf + j * VEC_WIDTH + 1), (uintptr_t) (freebuf + j * VEC_WIDTH + 0)  
+    __m512i freebuf_vec = _mm512_set_epi64((uintptr_t) (freebuf + 7), (uintptr_t) (freebuf + 6),
+      (uintptr_t) (freebuf + 5), (uintptr_t) (freebuf + 4), (uintptr_t) (freebuf + 3),
+      (uintptr_t) (freebuf + 2), (uintptr_t) (freebuf + 1), (uintptr_t) (freebuf + 0)  
     );
-    int my_n = MIN(VEC_WIDTH, (n - j * VEC_WIDTH));
-    __mmask8 mask = _cvtu32_mask8((1 << my_n) - 1);
+    __mmask8 mask = _cvtu32_mask8((1 << n) - 1);
 
   /* prefetch packet contents (1st cache line) */
   /*
@@ -343,7 +337,7 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
       masks[i] = _kand_mask8(_mm512_cmpeq_epi64_mask(popcnt, _mm512_set1_epi64(i)), mask_and_notzero);
     }
 
-    for (i = 0; i < my_n; i++) {
+    for (i = 0; i < n; i++) {
 
       if (_cvtmask8_u32(masks[i]) == 0) {
         break;
@@ -382,7 +376,7 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
       */
     }
 
-  }
+  //}
 
   arx_cache_flush(ctx, tsc);
 
