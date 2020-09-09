@@ -255,6 +255,17 @@ void dataplane_dump_stats(void)
 }
 #endif
 
+// The _mm512_popcnt_epi64 instruction is relatively new so we will not rely on it
+static __m512i popcnt_512_64(__m512i vec) {
+  unsigned long long data[8];
+  unsigned long long ret[8];
+  _mm512_storeu_epi64(data, vec);
+  for (unsigned i = 0; i < 8; i++) {
+    ret[i] = _mm_popcnt_u64(data[i]);
+  }
+  return _mm512_loadu_epi64(ret);
+}
+
 static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
     uint64_t tsc)
 {
@@ -330,7 +341,7 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
     __mmask8 masks[8];
     __mmask8 zeroes = _mm512_cmpeq_epi64_mask(fss_loaded, _mm512_setzero_si512());
     __mmask8 not_zeroes = _knot_mask8(zeroes);
-    __m512i popcnt = _mm512_popcnt_epi64(conflicts);
+    __m512i popcnt = popcnt_512_64(conflicts);
     masks[0] = _kand_mask8(_kor_mask8(_mm512_cmpeq_epi64_mask(popcnt, _mm512_setzero_si512()), zeroes), mask);
     __mmask8 mask_and_notzero = _kand_mask8(mask, not_zeroes);
     for (unsigned i = 1; i < 8; i++) {
