@@ -134,6 +134,11 @@ int dataplane_context_init(struct dataplane_context *ctx)
   assert(r == 0);
   fp_state->kctx[ctx->id].evfd = ctx->evfd;
 
+#ifdef DEBUG_STATS
+  memset(ctx->packets_queued, 0, sizeof(uint64_t) * 8);
+  memset(ctx->packets_processed, 0, sizeof(uint64_t) * 8);
+#endif
+
   return 0;
 }
 
@@ -155,6 +160,27 @@ void dataplane_loop(struct dataplane_context *ctx)
     /* count cycles of previous iteration if it was busy */
     prev_cyc = cyc;
     cyc = rte_get_tsc_cycles();
+#ifdef DEBUG_STATS
+    if (prev_cyc / DEBUG_PRINT_INTERVAL != cyc / DEBUG_PRINT_INTERVAL) {
+      fprintf(stderr, "debug stats: queue: ");
+      for (unsigned i = 0; i < 8; i++) {
+        if (i == 0) {
+          fprintf(stderr, "%lu", ctx->packets_queued[i]);
+        } else {
+          fprintf(stderr, "/ %lu", ctx->packets_queued[i]);
+        }
+      }
+      fprintf(stderr, "\ndebug stats: processed: ");
+      for (unsigned i = 0; i < 8; i++) {
+        if (i == 0) {
+          fprintf(stderr, "%lu", ctx->packets_processed[i]);
+        } else {
+          fprintf(stderr, "/ %lu", ctx->packets_processed[i]);
+        }
+      }
+      fprintf(stderr, "\n");
+    }
+#endif
     if (!was_idle)
       ctx->loadmon_cyc_busy += cyc - prev_cyc;
 
@@ -288,6 +314,9 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
     STATS_ADD(ctx, rx_empty, 1);
     return 0;
   }
+#ifdef DEBUG_STATS
+  __sync_fetch_and_add(&ctx->packets_queued[ret - 1], 1);
+#endif
   STATS_ADD(ctx, rx_total, n);
   n = ret;
 
@@ -353,6 +382,10 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
       if (_cvtmask8_u32(masks[i]) == 0) {
         break;
       }
+#ifdef DEBUG_STATS
+      __sync_fetch_and_add(&ctx->packets_processed[_mm_popcnt_u64(_cvtmask8_u32(masks[i])) - 1], 1);
+#endif
+
       __m256i ret_vec;
       __mmask8 cmp = _mm512_cmpneq_epi64_mask(_mm512_mask_i64gather_epi64(_mm512_undefined_epi32(), masks[i], fss_vec, NULL, 1), _mm512_set1_epi64(0));
       __mmask8 if_mask = _kand_mask8(cmp, masks[i]);

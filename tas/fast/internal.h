@@ -47,6 +47,8 @@
         uint16_t len_2, const void *buf_2);
 #endif
 //#define DATAPLANE_STATS
+#define DEBUG_STATS
+#define DEBUG_PRINT_INTERVAL 5000000000
 
 extern int exited;
 extern unsigned fp_cores_max;
