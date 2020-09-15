@@ -125,7 +125,7 @@ void notify_fastpath_core_wrapper(unsigned core) {
   notify_fastpath_core(core);
 }
 
-#pragma vectorize
+#pragma vectorize alive_check
 int fast_flows_qman(struct dataplane_context *ctx, uint32_t queue,
     struct network_buf_handle *nbh, uint32_t ts)
 {
@@ -226,7 +226,7 @@ unlock:
   return ret;
 }
 
-#pragma vectorize
+#pragma vectorize alive_check
 int fast_flows_qman_fwd(struct dataplane_context *ctx,
     struct flextcp_pl_flowst *fs)
 {
@@ -682,7 +682,7 @@ slowpath:
 }
 
 /* Update receive and transmit queue pointers from application */
-#pragma vectorize
+#pragma vectorize alive_check
 int fast_flows_bump(struct dataplane_context *ctx, uint32_t flow_id,
     uint16_t bump_seq, uint32_t rx_bump, uint32_t tx_bump, uint8_t flags,
     struct network_buf_handle *nbh, uint32_t ts)
@@ -803,7 +803,7 @@ unlock:
 }
 
 /* start retransmitting */
-#pragma vectorize
+#pragma vectorize alive_check
 void fast_flows_retransmit(struct dataplane_context *ctx, uint32_t flow_id)
 {
   struct flextcp_pl_flowst *fs = &fp_state->flowst[flow_id];
@@ -867,7 +867,7 @@ out:
 }
 
 /* read `len` bytes from position `pos` in cirucular transmit buffer */
-#pragma vectorize
+#pragma vectorize alive_check
 static void flow_tx_read(struct flextcp_pl_flowst *fs, uint32_t pos,
     uint16_t len, void *dst)
 {
@@ -883,7 +883,7 @@ static void flow_tx_read(struct flextcp_pl_flowst *fs, uint32_t pos,
 }
 
 /* write `len` bytes to position `pos` in cirucular receive buffer */
-#pragma vectorize
+#pragma vectorize alive_check
 static void flow_rx_write(struct flextcp_pl_flowst *fs, uint32_t pos,
     uint16_t len, const void *src)
 {
@@ -900,7 +900,7 @@ static void flow_rx_write(struct flextcp_pl_flowst *fs, uint32_t pos,
 }
 
 #ifdef FLEXNIC_PL_OOO_RECV
-#pragma vectorize
+#pragma vectorize alive_check
 static void flow_rx_seq_write(struct flextcp_pl_flowst *fs, uint32_t seq,
     uint16_t len, const void *src)
 {
@@ -913,7 +913,7 @@ static void flow_rx_seq_write(struct flextcp_pl_flowst *fs, uint32_t seq,
 }
 #endif
 
-#pragma vectorize
+#pragma vectorize alive_check
 static void flow_tx_segment(struct dataplane_context *ctx,
     struct network_buf_handle *nbh, struct flextcp_pl_flowst *fs,
     uint32_t seq, uint32_t ack, uint32_t rxwnd, uint16_t payload,
@@ -1070,7 +1070,7 @@ static void flow_tx_ack(struct dataplane_context *ctx, uint32_t seq,
   tx_send(ctx, nbh, network_buf_off(nbh), hdrlen);
 }
 
-#pragma vectorize
+#pragma vectorize alive_check
 static void flow_reset_retransmit(struct flextcp_pl_flowst *fs)
 {
   uint32_t x;
