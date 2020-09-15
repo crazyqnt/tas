@@ -374,6 +374,7 @@ int fast_flows_packet(struct dataplane_context *ctx,
   if (UNLIKELY((TCPH_FLAGS(&p->tcp) & ~(TCP_ACK | TCP_PSH | TCP_ECE | TCP_CWR |
             TCP_FIN)) != 0))
   {
+    ALIVE_CHECK();
     if ((TCPH_FLAGS(&p->tcp) & TCP_SYN) != 0) {
       /* for SYN/SYN-ACK we'll let the kernel handle them out of band */
       no_permanent_sp = 1;
@@ -456,6 +457,7 @@ int fast_flows_packet(struct dataplane_context *ctx,
 
   /* handle out of order segment */
   if (UNLIKELY(seq != fs->rx_next_seq)) {
+    ALIVE_CHECK();
     trigger_ack = 1;
 
     /* if there is no payload abort immediately */
@@ -536,6 +538,7 @@ int fast_flows_packet(struct dataplane_context *ctx,
 
   /* if there is payload, dma it to the receive buffer */
   if (payload_bytes > 0) {
+    ALIVE_CHECK();
     flow_rx_write(fs, fs->rx_next_pos, payload_bytes, payload);
 
     rx_bump = payload_bytes;
@@ -554,6 +557,7 @@ int fast_flows_packet(struct dataplane_context *ctx,
     /* if we have out of order segments, check whether buffer is continuous
      * or superfluous */
     if (UNLIKELY(fs->rx_ooo_len != 0)) {
+      ALIVE_CHECK();
       if (tcp_trim_rxbuf(fs, fs->rx_ooo_start, fs->rx_ooo_len, &trim_start,
             &trim_end) != 0) {
           /*fprintf(stderr, "dropping ooo (%p ooo.start=%u ooo.len=%u seq=%u "
@@ -562,6 +566,7 @@ int fast_flows_packet(struct dataplane_context *ctx,
         /* completely superfluous: drop out of order interval */
         fs->rx_ooo_len = 0;
       } else {
+        ALIVE_CHECK();
         /* adjust based on overlap */
         fs->rx_ooo_start += trim_start;
         fs->rx_ooo_len -= trim_start + trim_end;
@@ -569,6 +574,7 @@ int fast_flows_packet(struct dataplane_context *ctx,
             "len=%u next_seq=%u)\n", fs, fs->rx_ooo_start, fs->rx_ooo_len, seq,
             payload_bytes, fs->rx_next_seq);*/
         if (fs->rx_ooo_len > 0 && fs->rx_ooo_start == fs->rx_next_seq) {
+          ALIVE_CHECK();
           /* yay, we caught up, make continuous and drop OOO interval */
           /*fprintf(stderr, "caught up with ooo buffer (%p start=%u len=%u)\n",
               fs, fs->rx_ooo_start, fs->rx_ooo_len);*/
@@ -592,7 +598,9 @@ int fast_flows_packet(struct dataplane_context *ctx,
   if ((TCPH_FLAGS(&p->tcp) & TCP_FIN) == TCP_FIN &&
       !(fs->rx_base_sp & FLEXNIC_PL_FLOWST_RXFIN))
   {
+    ALIVE_CHECK();
     if (fs->rx_next_seq == f_beui32(p->tcp.seqno) + orig_payload && !fs->rx_ooo_len) {
+      ALIVE_CHECK();
       fin_bump = 1;
       fs->rx_base_sp |= FLEXNIC_PL_FLOWST_RXFIN;
       /* FIN takes up sequence number space */
@@ -607,6 +615,7 @@ unlock:
   /* if we bumped at least one, then we need to add a notification to the
    * queue */
   if (LIKELY(rx_bump != 0 || tx_bump != 0 || fin_bump)) {
+    ALIVE_CHECK();
 #if PL_DEBUG_ARX
     fprintf(stderr, "dma_krx_pkt_fastpath: updating application state\n");
 #endif
