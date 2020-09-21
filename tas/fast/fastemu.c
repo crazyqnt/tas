@@ -292,6 +292,12 @@ static __m512i popcnt_512_64(__m512i vec) {
   return _mm512_loadu_epi64(ret);
 }
 
+#pragma vectorize
+void dummy() {
+}
+
+__m512i network_buf_bufoff_vec(__m512i, __mmask8);
+
 static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
     uint64_t tsc)
 {
@@ -345,6 +351,7 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
     rte_prefetch0(network_buf_bufoff(bhs[i]));
   }
   */
+    rte_prefetch0_vec(network_buf_bufoff_vec(bhs_vec, mask), mask);
 
   /* look up flow states */
   //fast_flows_packet_fss(ctx, bhs, fss, n);
@@ -358,6 +365,7 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
     rte_prefetch0(network_buf_bufoff(bhs[i]) + 64);
   }
   */
+    rte_prefetch0_vec(_mm512_add_epi64(network_buf_bufoff_vec(bhs_vec, mask), _mm512_set1_epi64(64)), mask);
 
   /* parse packets */
   //fast_flows_packet_parse(ctx, bhs, fss, tcpopts, n);

@@ -76,4 +76,15 @@ uint32_t qman_next_ts(struct qman_thread *t, uint32_t cur_ts);
 
 void *util_create_shmsiszed(const char *name, size_t size, void *addr);
 
+static void rte_prefetch0_vec(__m512i addr, __mmask8 m) {
+    void* ptrs[8];
+    _mm512_storeu_epi64(ptrs, addr);
+    int mask = _cvtmask8_u32(m);
+    for (unsigned i = 0; i < 8; i++) {
+        if (mask & (1 << i)) {
+            rte_prefetch0(ptrs[i]);
+        }
+    }
+}
+
 #endif /* ndef INTERNAL_H_ */
