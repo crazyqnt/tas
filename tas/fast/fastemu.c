@@ -330,7 +330,6 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
 
   //for (unsigned j = 0; j < BATCH_SIZE; j++) {
 
-#if 0
     __m512i ctx_vec = _mm512_set1_epi64((uintptr_t) ctx);
     __m512i bhs_vec = _mm512_loadu_epi64(bhs);
     __m512i fss_vec = _mm512_set_epi64((uintptr_t) (fss + 7), (uintptr_t) (fss + 6),
@@ -375,7 +374,7 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
     //printf("FSS post parse: ");
     //d_print_512u(_mm512_mask_i64gather_epi64(_mm512_set1_epi64(1), mask, fss_vec, NULL, 1), mask);
 
-#endif
+  /*
     for (i = 0; i < n; i++) {
       rte_prefetch0(network_buf_bufoff(bhs[i]));
     }
@@ -401,8 +400,8 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
         fast_kernel_packet(ctx, bhs[i]);
       }
     }
+    */
 
-#if 0
     __m512i fss_loaded = _mm512_mask_i64gather_epi64(_mm512_setzero_si512(), mask, fss_vec, NULL, 1);
     __m512i conflicts = _mm512_conflict_epi64(fss_loaded);
     __mmask8 masks[8];
@@ -457,7 +456,6 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
     }
       */
     }
-#endif
 
   //}
 
