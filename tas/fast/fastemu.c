@@ -329,6 +329,8 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
   //fprintf(stderr, "Ok, here we go: %d\n", n);
 
   //for (unsigned j = 0; j < BATCH_SIZE; j++) {
+
+#if 0
     __m512i ctx_vec = _mm512_set1_epi64((uintptr_t) ctx);
     __m512i bhs_vec = _mm512_loadu_epi64(bhs);
     __m512i fss_vec = _mm512_set_epi64((uintptr_t) (fss + 7), (uintptr_t) (fss + 6),
@@ -339,12 +341,10 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
       (uintptr_t) (tcpopts + 5), (uintptr_t) (tcpopts + 4), (uintptr_t) (tcpopts + 3),
       (uintptr_t) (tcpopts + 2), (uintptr_t) (tcpopts + 1), (uintptr_t) (tcpopts + 0)  
     );
-#if 0
     __m512i freebuf_vec = _mm512_set_epi64((uintptr_t) (freebuf + 7), (uintptr_t) (freebuf + 6),
       (uintptr_t) (freebuf + 5), (uintptr_t) (freebuf + 4), (uintptr_t) (freebuf + 3),
       (uintptr_t) (freebuf + 2), (uintptr_t) (freebuf + 1), (uintptr_t) (freebuf + 0)  
     );
-#endif
     __mmask8 mask = _cvtu32_mask8((1 << n) - 1);
 
   /* prefetch packet contents (1st cache line) */
@@ -375,9 +375,21 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
     //printf("FSS post parse: ");
     //d_print_512u(_mm512_mask_i64gather_epi64(_mm512_set1_epi64(1), mask, fss_vec, NULL, 1), mask);
 
+#endif
+    for (i = 0; i < n; i++) {
+      rte_prefetch0(network_buf_bufoff(bhs[i]));
+    }
+    for (i = 0; i < n; i++) {
+      fast_flows_packet_fss(ctx, bhs[i], &fss[i]);
+    }
+    for (i = 0; i < n; i++) {
+      rte_prefetch0(network_buf_bufoff(bhs[i]) + 64);
+    }
+    for (i = 0; i < n; i++) {
+      fast_flows_packet_parse(ctx, bhs[i], &fss[i], &tcpopts[i]);
+    }
   
     for (i = 0; i < n; i++) {
-      int ret;
       if (fss[i] != NULL) {
         ret = fast_flows_packet(ctx, bhs[i], fss[i], &tcpopts[i], ts);
       } else {
