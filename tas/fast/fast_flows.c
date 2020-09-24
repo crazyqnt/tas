@@ -85,11 +85,6 @@ static inline void tcp_checksums(struct network_buf_handle *nbh,
     struct pkt_tcp *p, beui32_t ip_s, beui32_t ip_d, uint16_t l3_paylen);
 
 
-__m256i __bswap_16_vec(__m256i data, __mmask8 k) {
-  __m256i lower = _mm256_slli_epi32(_mm256_and_si256(data, _mm256_set1_epi32(0xFF)), 8);
-  return _mm256_or_si256(_mm256_srli_epi32(data, 8), lower);
-}
-
 void fast_flows_qman_pf(struct dataplane_context *ctx, uint32_t *queues,
     uint16_t n)
 {
@@ -141,11 +136,13 @@ int fast_flows_qman(struct dataplane_context *ctx, uint32_t queue,
   /* if connection has been moved, add to forwarding queue and stop */
   new_core = fp_state->flow_group_steering[fs->flow_group];
   if (new_core != ctx->id) {
+    ALIVE_CHECK();
     /*fprintf(stderr, "fast_flows_qman: arrived on wrong core, forwarding "
         "%u -> %u (fs=%p, fg=%u)\n", ctx->id, new_core, fs, fs->flow_group);*/
 
     /* enqueue flo state on forwarding queue */
     if (rte_ring_enqueue_wrapper(ctxs[new_core]->qman_fwd_ring, fs) != 0) {
+      ALIVE_CHECK();
       fprintf(stderr, "fast_flows_qman: rte_ring_enqueue failed\n");
       abort();
     }
@@ -154,6 +151,7 @@ int fast_flows_qman(struct dataplane_context *ctx, uint32_t queue,
     if (qman_set(&ctx->qman, flow_id, 0, 0, 0,
           QMAN_SET_RATE | QMAN_SET_MAXCHUNK | QMAN_SET_AVAIL) != 0)
     {
+      ALIVE_CHECK();
       fprintf(stderr, "flast_flows_qman: qman_set clear failed, UNEXPECTED\n");
       abort();
     }
@@ -243,6 +241,7 @@ int fast_flows_qman_fwd(struct dataplane_context *ctx,
   if (qman_set(&ctx->qman, flow_id, fs->tx_rate, avail, TCP_MSS,
         QMAN_SET_RATE | QMAN_SET_MAXCHUNK | QMAN_SET_AVAIL) != 0)
   {
+    ALIVE_CHECK();
     fprintf(stderr, "fast_flows_qman_fwd: qman_set failed, UNEXPECTED\n");
     abort();
   }
@@ -366,6 +365,7 @@ int fast_flows_packet(struct dataplane_context *ctx,
 
   /* state indicates slow path */
   if (UNLIKELY((fs->rx_base_sp & FLEXNIC_PL_FLOWST_SLOWPATH) != 0)) {
+    ALIVE_CHECK();
     fprintf(stderr, "dma_krx_pkt_fastpath: slowpath because of state\n");
     goto slowpath;
   }
@@ -379,6 +379,7 @@ int fast_flows_packet(struct dataplane_context *ctx,
       /* for SYN/SYN-ACK we'll let the kernel handle them out of band */
       no_permanent_sp = 1;
     } else {
+      ALIVE_CHECK();
       //fprintf(stderr, "dma_krx_pkt_fastpath: slow path because of flags (%x)\n",
       //    TCPH_FLAGS(&p->tcp));
       fprintf(stderr, "dma_krx_pkt_fastpath: slow path because of flags\n");
@@ -532,6 +533,7 @@ int fast_flows_packet(struct dataplane_context *ctx,
   if ((fs->rx_base_sp & FLEXNIC_PL_FLOWST_RXFIN) == FLEXNIC_PL_FLOWST_RXFIN &&
       payload_bytes > 0)
   {
+    ALIVE_CHECK();
     fprintf(stderr, "fast_flows_packet: data after FIN dropped\n");
     goto unlock;
   }
@@ -607,6 +609,7 @@ int fast_flows_packet(struct dataplane_context *ctx,
       fs->rx_next_seq++;
       trigger_ack = 1;
     } else {
+      ALIVE_CHECK();
       fprintf(stderr, "fast_flows_packet: ignored fin because out of order\n");
     }
   }
@@ -657,6 +660,7 @@ unlock:
           old_avail, TCP_MSS, QMAN_SET_RATE | QMAN_SET_MAXCHUNK
           | QMAN_ADD_AVAIL) != 0)
     {
+      ALIVE_CHECK();
       fprintf(stderr, "fast_flows_packet: qman_set 1 failed, UNEXPECTED\n");
       abort();
     }
@@ -736,6 +740,7 @@ int fast_flows_bump(struct dataplane_context *ctx, uint32_t flow_id,
   if ((fs->rx_base_sp & FLEXNIC_PL_FLOWST_TXFIN) == FLEXNIC_PL_FLOWST_TXFIN &&
       tx_bump != 0)
   {
+    ALIVE_CHECK();
     /* TX already closed, don't accept anything for transmission */
     fprintf(stderr, "fast_flows_bump: tx bump while TX is already closed\n");
     tx_bump = 0;
@@ -743,6 +748,7 @@ int fast_flows_bump(struct dataplane_context *ctx, uint32_t flow_id,
       !(fs->rx_base_sp & FLEXNIC_PL_FLOWST_TXFIN) &&
       !tx_bump)
   {
+    ALIVE_CHECK();
     /* Closing TX requires at least one byte (dummy) */
     fprintf(stderr, "fast_flows_bump: tx eos without dummy byte\n");
     goto unlock;
@@ -754,11 +760,13 @@ int fast_flows_bump(struct dataplane_context *ctx, uint32_t flow_id,
   if (tx_bump > fs->tx_len || tx_avail > fs->tx_len ||
       tx_avail + fs->tx_sent > fs->tx_len)
   {
+    ALIVE_CHECK();
     fprintf(stderr, "fast_flows_bump: tx bump too large\n");
     goto unlock;
   }
   /* validate rx bump */
   if (rx_bump > fs->rx_len || rx_bump + fs->rx_avail > fs->tx_len) {
+    ALIVE_CHECK();
     fprintf(stderr, "fast_flows_bump: rx bump too large\n");
     goto unlock;
   }
@@ -779,6 +787,7 @@ int fast_flows_bump(struct dataplane_context *ctx, uint32_t flow_id,
           old_avail, TCP_MSS, QMAN_SET_RATE | QMAN_SET_MAXCHUNK
           | QMAN_ADD_AVAIL) != 0)
     {
+      ALIVE_CHECK();
       fprintf(stderr, "flast_flows_bump: qman_set 1 failed, UNEXPECTED\n");
       abort();
     }
@@ -856,6 +865,7 @@ void fast_flows_retransmit(struct dataplane_context *ctx, uint32_t flow_id)
     if (qman_set(&ctx->qman, flow_id, fs->tx_rate, new_avail - old_avail,
           TCP_MSS, QMAN_SET_RATE | QMAN_SET_MAXCHUNK | QMAN_ADD_AVAIL) != 0)
     {
+      ALIVE_CHECK();
       fprintf(stderr, "flast_flows_bump: qman_set 1 failed, UNEXPECTED\n");
       abort();
     }

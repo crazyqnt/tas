@@ -49,12 +49,16 @@ typedef uint16_t beui16_t;
 typedef uint32_t beui32_t;
 typedef uint64_t beui64_t;
 
-static inline uint16_t f_beui16(beui16_t x) { return __builtin_bswap16(x); }
-
-static inline __m256i f_beui16_vec(__m256i x, __mmask8 m) {
+static inline __m256i __bswap_16_vec(__m256i x, __mmask8 m) {
   __m256i low = _mm256_and_si256(x, _mm256_set1_epi32(0xFF));
   __m256i high = _mm256_and_si256(_mm256_srli_epi32(x, 8), _mm256_set1_epi32(0xFF));
   return _mm256_or_si256(_mm256_slli_epi32(low, 8), high);
+}
+
+static inline uint16_t f_beui16(beui16_t x) { return __builtin_bswap16(x); }
+
+static inline __m256i f_beui16_vec(__m256i x, __mmask8 m) {
+  return __bswap_16_vec(x, m);
 }
 
 static inline uint32_t f_beui32(beui32_t x) { return __builtin_bswap32(x); }
@@ -76,7 +80,7 @@ static inline beui16_t t_beui16(uint16_t x)
 }
 
 static inline __m256i t_beui16_vec(__m256i x, __mmask8 m) {
-  return f_beui16_vec(x, m);
+  return __bswap_16_vec(x, m);
 }
 
 static inline beui32_t t_beui32(uint32_t x)
