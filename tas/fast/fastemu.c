@@ -340,10 +340,6 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
       (uintptr_t) (tcpopts + 5), (uintptr_t) (tcpopts + 4), (uintptr_t) (tcpopts + 3),
       (uintptr_t) (tcpopts + 2), (uintptr_t) (tcpopts + 1), (uintptr_t) (tcpopts + 0)  
     );
-    __m512i freebuf_vec = _mm512_set_epi64((uintptr_t) (freebuf + 7), (uintptr_t) (freebuf + 6),
-      (uintptr_t) (freebuf + 5), (uintptr_t) (freebuf + 4), (uintptr_t) (freebuf + 3),
-      (uintptr_t) (freebuf + 2), (uintptr_t) (freebuf + 1), (uintptr_t) (freebuf + 0)  
-    );
     __mmask8 mask = _cvtu32_mask8((1 << n) - 1);
 
   /* prefetch packet contents (1st cache line) */
@@ -387,7 +383,8 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
     for (i = 0; i < n; i++) {
       fast_flows_packet_parse(ctx, bhs[i], &fss[i], &tcpopts[i]);
     }
-  
+    */
+
     for (i = 0; i < n; i++) {
       if (fss[i] != NULL) {
         ret = fast_flows_packet(ctx, bhs[i], fss[i], &tcpopts[i], ts);
@@ -400,63 +397,7 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
         fast_kernel_packet(ctx, bhs[i]);
       }
     }
-    */
-
-    __m512i fss_loaded = _mm512_mask_i64gather_epi64(_mm512_setzero_si512(), mask, fss_vec, NULL, 1);
-    __m512i conflicts = _mm512_conflict_epi64(fss_loaded);
-    __mmask8 masks[8];
-    __mmask8 zeroes = _mm512_cmpeq_epi64_mask(fss_loaded, _mm512_setzero_si512());
-    __mmask8 not_zeroes = _knot_mask8(zeroes);
-    __m512i popcnt = popcnt_512_64(conflicts);
-    masks[0] = _kand_mask8(_kor_mask8(_mm512_cmpeq_epi64_mask(popcnt, _mm512_setzero_si512()), zeroes), mask);
-    __mmask8 mask_and_notzero = _kand_mask8(mask, not_zeroes);
-    for (unsigned i = 1; i < 8; i++) {
-      masks[i] = _kand_mask8(_mm512_cmpeq_epi64_mask(popcnt, _mm512_set1_epi64(i)), mask_and_notzero);
-    }
-
-    for (i = 0; i < n; i++) {
-
-      if (_cvtmask8_u32(masks[i]) == 0) {
-        break;
-      }
-#ifdef DEBUG_STATS
-      __sync_fetch_and_add(&ctx->packets_processed[_mm_popcnt_u64(_cvtmask8_u32(masks[i])) - 1], 1);
-#endif
-
-      __m256i ret_vec;
-      __mmask8 cmp = _mm512_cmpneq_epi64_mask(_mm512_mask_i64gather_epi64(_mm512_undefined_epi32(), masks[i], fss_vec, NULL, 1), _mm512_set1_epi64(0));
-      __mmask8 if_mask = _kand_mask8(cmp, masks[i]);
-      __m256i ts_vec = _mm256_set1_epi32(ts);
-      /* run fast-path for flows with flow state */
-      /*
-      if (fss[i] != NULL) {
-        ret = fast_flows_packet(ctx, bhs[i], fss[i], &tcpopts[i], ts);
-      } else {
-        ret = -1;
-      }*/
-      ret_vec = _mm256_mask_mov_epi32(_mm256_set1_epi32(-1), if_mask,
-        fast_flows_packet_vec(ctx_vec, bhs_vec,
-          _mm512_mask_i64gather_epi64(_mm512_undefined_epi32(), if_mask, fss_vec, NULL, 1),
-          tcpopts_vec, ts_vec, if_mask
-        )
-      );
-
-      cmp = _mm256_cmpgt_epi32_mask(ret_vec, _mm256_set1_epi32(0));
-      if_mask = _kand_mask8(cmp, masks[i]);
-      _mm512_mask_i64scatter_epi8_custom(if_mask, freebuf_vec, _mm256_set1_epi32(1));
-      cmp = _kandn_mask8(cmp, _mm256_cmplt_epi32_mask(ret_vec, _mm256_set1_epi32(0)));
-      if_mask = _kand_mask8(cmp, masks[i]);
-      fast_kernel_packet_vec(ctx_vec, bhs_vec, if_mask);
-
-      /*
-    if (ret > 0) {
-      freebuf[i] = 1;
-    } else if (ret < 0) {
-      fast_kernel_packet(ctx, bhs[i]);
-    }
-      */
-    }
-
+    
   //}
 
   arx_cache_flush(ctx, tsc);
