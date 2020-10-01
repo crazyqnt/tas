@@ -326,25 +326,45 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
   STATS_ADD(ctx, rx_total, n);
   n = ret;
 
+  int n0 = n, n1 = 0;
+  if (n > VEC_WIDTH) {
+    n1 = n - VEC_WIDTH;
+    n0 = VEC_WIDTH;
+  }
+
   //fprintf(stderr, "Ok, here we go: %d\n", n);
 
   //for (unsigned j = 0; j < BATCH_SIZE; j++) {
 
     __m512i ctx_vec = _mm512_set1_epi64((uintptr_t) ctx);
-    __m512i bhs_vec = _mm512_loadu_epi64(bhs);
-    __m512i fss_vec = _mm512_set_epi64((uintptr_t) (fss + 7), (uintptr_t) (fss + 6),
+    __m512i bhs_vec_0 = _mm512_loadu_epi64(bhs);
+    __m512i bhs_vec_1 = _mm512_loadu_epi64(bhs + VEC_WIDTH);
+    __m512i fss_vec_0 = _mm512_set_epi64((uintptr_t) (fss + 7), (uintptr_t) (fss + 6),
       (uintptr_t) (fss + 5), (uintptr_t) (fss + 4), (uintptr_t) (fss + 3),
       (uintptr_t) (fss + 2), (uintptr_t) (fss + 1), (uintptr_t) (fss + 0)  
     );
-    __m512i tcpopts_vec = _mm512_set_epi64((uintptr_t) (tcpopts + 7), (uintptr_t) (tcpopts + 6),
+    __m512i fss_vec_1 = _mm512_set_epi64((uintptr_t) (fss + 15), (uintptr_t) (fss + 14),
+      (uintptr_t) (fss + 13), (uintptr_t) (fss + 12), (uintptr_t) (fss + 11),
+      (uintptr_t) (fss + 10), (uintptr_t) (fss + 9), (uintptr_t) (fss + 8)  
+    );
+    __m512i tcpopts_vec_0 = _mm512_set_epi64((uintptr_t) (tcpopts + 7), (uintptr_t) (tcpopts + 6),
       (uintptr_t) (tcpopts + 5), (uintptr_t) (tcpopts + 4), (uintptr_t) (tcpopts + 3),
       (uintptr_t) (tcpopts + 2), (uintptr_t) (tcpopts + 1), (uintptr_t) (tcpopts + 0)  
     );
-    __m512i freebuf_vec = _mm512_set_epi64((uintptr_t) (freebuf + 7), (uintptr_t) (freebuf + 6),
+    __m512i tcpopts_vec_1 = _mm512_set_epi64((uintptr_t) (tcpopts + 15), (uintptr_t) (tcpopts + 14),
+      (uintptr_t) (tcpopts + 13), (uintptr_t) (tcpopts + 12), (uintptr_t) (tcpopts + 11),
+      (uintptr_t) (tcpopts + 10), (uintptr_t) (tcpopts + 9), (uintptr_t) (tcpopts + 8)  
+    );
+    __m512i freebuf_vec_0 = _mm512_set_epi64((uintptr_t) (freebuf + 7), (uintptr_t) (freebuf + 6),
       (uintptr_t) (freebuf + 5), (uintptr_t) (freebuf + 4), (uintptr_t) (freebuf + 3),
       (uintptr_t) (freebuf + 2), (uintptr_t) (freebuf + 1), (uintptr_t) (freebuf + 0)  
     );
-    __mmask8 mask = _cvtu32_mask8((1 << n) - 1);
+    __m512i freebuf_vec_1 = _mm512_set_epi64((uintptr_t) (freebuf + 15), (uintptr_t) (freebuf + 14),
+      (uintptr_t) (freebuf + 13), (uintptr_t) (freebuf + 12), (uintptr_t) (freebuf + 11),
+      (uintptr_t) (freebuf + 10), (uintptr_t) (freebuf + 9), (uintptr_t) (freebuf + 8)  
+    );
+    __mmask8 mask_0 = _cvtu32_mask8((1 << n0) - 1);
+    __mmask8 mask_1 = _cvtu32_mask8((1 << n1) - 1);
 
   /* prefetch packet contents (1st cache line) */
   /*
@@ -352,11 +372,13 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
     rte_prefetch0(network_buf_bufoff(bhs[i]));
   }
   */
-    rte_prefetch0_vec(network_buf_bufoff_vec(bhs_vec, mask), mask);
+    rte_prefetch0_vec(network_buf_bufoff_vec(bhs_vec_0, mask_0), mask_0);
+    rte_prefetch0_vec(network_buf_bufoff_vec(bhs_vec_1, mask_1), mask_1);
 
   /* look up flow states */
   //fast_flows_packet_fss(ctx, bhs, fss, n);
-    fast_flows_packet_fss_vec(ctx_vec, bhs_vec, fss_vec, mask);
+    fast_flows_packet_fss_vec(ctx_vec, bhs_vec_0, fss_vec_0, mask_0);
+    fast_flows_packet_fss_vec(ctx_vec, bhs_vec_1, fss_vec_1, mask_1);
     //printf("FSS: ");
     //d_print_512u(_mm512_mask_i64gather_epi64(_mm512_set1_epi64(1), mask, fss_vec, NULL, 1), mask);
 
@@ -366,11 +388,13 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
     rte_prefetch0(network_buf_bufoff(bhs[i]) + 64);
   }
   */
-    rte_prefetch0_vec(_mm512_add_epi64(network_buf_bufoff_vec(bhs_vec, mask), _mm512_set1_epi64(64)), mask);
+    rte_prefetch0_vec(_mm512_add_epi64(network_buf_bufoff_vec(bhs_vec_0, mask_0), _mm512_set1_epi64(64)), mask_0);
+    rte_prefetch0_vec(_mm512_add_epi64(network_buf_bufoff_vec(bhs_vec_1, mask_1), _mm512_set1_epi64(64)), mask_1);
 
   /* parse packets */
   //fast_flows_packet_parse(ctx, bhs, fss, tcpopts, n);
-    fast_flows_packet_parse_vec(ctx_vec, bhs_vec, fss_vec, tcpopts_vec, mask);
+    fast_flows_packet_parse_vec(ctx_vec, bhs_vec_0, fss_vec_0, tcpopts_vec_0, mask_0);
+    fast_flows_packet_parse_vec(ctx_vec, bhs_vec_1, fss_vec_1, tcpopts_vec_1, mask_1);
     //printf("FSS post parse: ");
     //d_print_512u(_mm512_mask_i64gather_epi64(_mm512_set1_epi64(1), mask, fss_vec, NULL, 1), mask);
 
@@ -402,29 +426,44 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
     }
     */
 
-    __m512i fss_loaded = _mm512_mask_i64gather_epi64(_mm512_setzero_si512(), mask, fss_vec, NULL, 1);
-    __m512i conflicts = _mm512_conflict_epi64(fss_loaded);
-    __mmask8 masks[8];
-    __mmask8 zeroes = _mm512_cmpeq_epi64_mask(fss_loaded, _mm512_setzero_si512());
-    __mmask8 not_zeroes = _knot_mask8(zeroes);
-    __m512i popcnt = popcnt_512_64(conflicts);
-    masks[0] = _kand_mask8(_kor_mask8(_mm512_cmpeq_epi64_mask(popcnt, _mm512_setzero_si512()), zeroes), mask);
-    __mmask8 mask_and_notzero = _kand_mask8(mask, not_zeroes);
+    __m512i fss_loaded_0 = _mm512_mask_i64gather_epi64(_mm512_setzero_si512(), mask_0, fss_vec_0, NULL, 1);
+    __m512i fss_loaded_1 = _mm512_mask_i64gather_epi64(_mm512_setzero_si512(), mask_1, fss_vec_1, NULL, 1);
+    __m512i conflicts_0 = _mm512_conflict_epi64(fss_loaded_0);
+    __m512i conflicts_1 = _mm512_conflict_epi64(fss_loaded_1);
+    __mmask8 masks[BATCH_SIZE];
+    __mmask8 zeroes_0 = _mm512_cmpeq_epi64_mask(fss_loaded_0, _mm512_setzero_si512());
+    __mmask8 zeroes_1 = _mm512_cmpeq_epi64_mask(fss_loaded_1, _mm512_setzero_si512());
+    __mmask8 not_zeroes_0 = _knot_mask8(zeroes_0);
+    __mmask8 not_zeroes_1 = _knot_mask8(zeroes_1);
+    __m512i popcnt_0 = popcnt_512_64(conflicts_0);
+    __m512i popcnt_1 = popcnt_512_64(conflicts_1);
+    masks[0] = _kand_mask8(_kor_mask8(_mm512_cmpeq_epi64_mask(popcnt_0, _mm512_setzero_si512()), zeroes_0), mask_0);
+    masks[8] = _kand_mask8(_kor_mask8(_mm512_cmpeq_epi64_mask(popcnt_1, _mm512_setzero_si512()), zeroes_1), mask_1);
+    __mmask8 mask_and_notzero_0 = _kand_mask8(mask_0, not_zeroes_0);
+    __mmask8 mask_and_notzero_1 = _kand_mask8(mask_1, not_zeroes_1);
     for (unsigned i = 1; i < 8; i++) {
-      masks[i] = _kand_mask8(_mm512_cmpeq_epi64_mask(popcnt, _mm512_set1_epi64(i)), mask_and_notzero);
+      masks[i] = _kand_mask8(_mm512_cmpeq_epi64_mask(popcnt_0, _mm512_set1_epi64(i)), mask_and_notzero_0);
+    }
+    for (unsigned i = 9; i < 16; i++) {
+      masks[i] = _kand_mask8(_mm512_cmpeq_epi64_mask(popcnt_1, _mm512_set1_epi64(i - 8)), mask_and_notzero_1);
     }
 
     for (i = 0; i < n; i++) {
 
       if (_cvtmask8_u32(masks[i]) == 0) {
-        break;
+        continue;
       }
 #ifdef DEBUG_STATS
       __sync_fetch_and_add(&ctx->packets_processed[_mm_popcnt_u64(_cvtmask8_u32(masks[i])) - 1], 1);
 #endif
 
       __m256i ret_vec;
-      __mmask8 cmp = _mm512_cmpneq_epi64_mask(_mm512_mask_i64gather_epi64(_mm512_undefined_epi32(), masks[i], fss_vec, NULL, 1), _mm512_set1_epi64(0));
+      __mmask8 cmp;
+      if (i >= 8) {
+        cmp = _mm512_cmpneq_epi64_mask(_mm512_mask_i64gather_epi64(_mm512_undefined_epi32(), masks[i], fss_vec_1, NULL, 1), _mm512_set1_epi64(0));
+      } else {
+        cmp = _mm512_cmpneq_epi64_mask(_mm512_mask_i64gather_epi64(_mm512_undefined_epi32(), masks[i], fss_vec_0, NULL, 1), _mm512_set1_epi64(0));
+      }
       __mmask8 if_mask = _kand_mask8(cmp, masks[i]);
       __m256i ts_vec = _mm256_set1_epi32(ts);
       /* run fast-path for flows with flow state */
@@ -434,19 +473,36 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
       } else {
         ret = -1;
       }*/
-      ret_vec = _mm256_mask_mov_epi32(_mm256_set1_epi32(-1), if_mask,
-        fast_flows_packet_vec(ctx_vec, bhs_vec,
-          _mm512_mask_i64gather_epi64(_mm512_undefined_epi32(), if_mask, fss_vec, NULL, 1),
-          tcpopts_vec, ts_vec, if_mask
-        )
-      );
+      if (i >= 8) {
+        ret_vec = _mm256_mask_mov_epi32(_mm256_set1_epi32(-1), if_mask,
+          fast_flows_packet_vec(ctx_vec, bhs_vec_1,
+            _mm512_mask_i64gather_epi64(_mm512_undefined_epi32(), if_mask, fss_vec_1, NULL, 1),
+            tcpopts_vec_1, ts_vec, if_mask
+          )
+        );
+      } else {
+        ret_vec = _mm256_mask_mov_epi32(_mm256_set1_epi32(-1), if_mask,
+          fast_flows_packet_vec(ctx_vec, bhs_vec_0,
+            _mm512_mask_i64gather_epi64(_mm512_undefined_epi32(), if_mask, fss_vec_0, NULL, 1),
+            tcpopts_vec_0, ts_vec, if_mask
+          )
+        );
+      }
 
       cmp = _mm256_cmpgt_epi32_mask(ret_vec, _mm256_set1_epi32(0));
       if_mask = _kand_mask8(cmp, masks[i]);
-      _mm512_mask_i64scatter_epi8_custom(if_mask, freebuf_vec, _mm256_set1_epi32(1));
+      if (i >= 8) {
+        _mm512_mask_i64scatter_epi8_custom(if_mask, freebuf_vec_1, _mm256_set1_epi32(1));
+      } else {
+        _mm512_mask_i64scatter_epi8_custom(if_mask, freebuf_vec_0, _mm256_set1_epi32(1));
+      }
       cmp = _kandn_mask8(cmp, _mm256_cmplt_epi32_mask(ret_vec, _mm256_set1_epi32(0)));
       if_mask = _kand_mask8(cmp, masks[i]);
-      fast_kernel_packet_vec(ctx_vec, bhs_vec, if_mask);
+      if (i >= 8) {
+        fast_kernel_packet_vec(ctx_vec, bhs_vec_1, if_mask);
+      } else {
+        fast_kernel_packet_vec(ctx_vec, bhs_vec_0, if_mask);
+      }
 
       /*
     if (ret > 0) {
