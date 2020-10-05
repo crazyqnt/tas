@@ -351,9 +351,6 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
       (uintptr_t) (tcpopts + 5), (uintptr_t) (tcpopts + 4), (uintptr_t) (tcpopts + 3),
       (uintptr_t) (tcpopts + 2), (uintptr_t) (tcpopts + 1), (uintptr_t) (tcpopts + 0)  
     );
-<<<<<<< HEAD
-    __mmask8 mask = _cvtu32_mask8((1 << n) - 1);
-=======
     __m512i tcpopts_vec_1 = _mm512_set_epi64((uintptr_t) (tcpopts + 15), (uintptr_t) (tcpopts + 14),
       (uintptr_t) (tcpopts + 13), (uintptr_t) (tcpopts + 12), (uintptr_t) (tcpopts + 11),
       (uintptr_t) (tcpopts + 10), (uintptr_t) (tcpopts + 9), (uintptr_t) (tcpopts + 8)  
@@ -368,7 +365,6 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
     );
     __mmask8 mask_0 = _cvtu32_mask8((1 << n0) - 1);
     __mmask8 mask_1 = _cvtu32_mask8((1 << n1) - 1);
->>>>>>> opt_doublebatch
 
   /* prefetch packet contents (1st cache line) */
   /*
@@ -429,99 +425,7 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
         fast_kernel_packet(ctx, bhs[i]);
       }
     }
-<<<<<<< HEAD
     
-=======
-    */
-
-    __m512i fss_loaded_0 = _mm512_mask_i64gather_epi64(_mm512_setzero_si512(), mask_0, fss_vec_0, NULL, 1);
-    __m512i fss_loaded_1 = _mm512_mask_i64gather_epi64(_mm512_setzero_si512(), mask_1, fss_vec_1, NULL, 1);
-    __m512i conflicts_0 = _mm512_conflict_epi64(fss_loaded_0);
-    __m512i conflicts_1 = _mm512_conflict_epi64(fss_loaded_1);
-    __mmask8 masks[BATCH_SIZE];
-    __mmask8 zeroes_0 = _mm512_cmpeq_epi64_mask(fss_loaded_0, _mm512_setzero_si512());
-    __mmask8 zeroes_1 = _mm512_cmpeq_epi64_mask(fss_loaded_1, _mm512_setzero_si512());
-    __mmask8 not_zeroes_0 = _knot_mask8(zeroes_0);
-    __mmask8 not_zeroes_1 = _knot_mask8(zeroes_1);
-    __m512i popcnt_0 = popcnt_512_64(conflicts_0);
-    __m512i popcnt_1 = popcnt_512_64(conflicts_1);
-    masks[0] = _kand_mask8(_kor_mask8(_mm512_cmpeq_epi64_mask(popcnt_0, _mm512_setzero_si512()), zeroes_0), mask_0);
-    masks[8] = _kand_mask8(_kor_mask8(_mm512_cmpeq_epi64_mask(popcnt_1, _mm512_setzero_si512()), zeroes_1), mask_1);
-    __mmask8 mask_and_notzero_0 = _kand_mask8(mask_0, not_zeroes_0);
-    __mmask8 mask_and_notzero_1 = _kand_mask8(mask_1, not_zeroes_1);
-    for (unsigned i = 1; i < 8; i++) {
-      masks[i] = _kand_mask8(_mm512_cmpeq_epi64_mask(popcnt_0, _mm512_set1_epi64(i)), mask_and_notzero_0);
-    }
-    for (unsigned i = 9; i < 16; i++) {
-      masks[i] = _kand_mask8(_mm512_cmpeq_epi64_mask(popcnt_1, _mm512_set1_epi64(i - 8)), mask_and_notzero_1);
-    }
-
-    for (i = 0; i < n; i++) {
-
-      if (_cvtmask8_u32(masks[i]) == 0) {
-        continue;
-      }
-#ifdef DEBUG_STATS
-      __sync_fetch_and_add(&ctx->packets_processed[_mm_popcnt_u64(_cvtmask8_u32(masks[i])) - 1], 1);
-#endif
-
-      __m256i ret_vec;
-      __mmask8 cmp;
-      if (i >= 8) {
-        cmp = _mm512_cmpneq_epi64_mask(_mm512_mask_i64gather_epi64(_mm512_undefined_epi32(), masks[i], fss_vec_1, NULL, 1), _mm512_set1_epi64(0));
-      } else {
-        cmp = _mm512_cmpneq_epi64_mask(_mm512_mask_i64gather_epi64(_mm512_undefined_epi32(), masks[i], fss_vec_0, NULL, 1), _mm512_set1_epi64(0));
-      }
-      __mmask8 if_mask = _kand_mask8(cmp, masks[i]);
-      __m256i ts_vec = _mm256_set1_epi32(ts);
-      /* run fast-path for flows with flow state */
-      /*
-      if (fss[i] != NULL) {
-        ret = fast_flows_packet(ctx, bhs[i], fss[i], &tcpopts[i], ts);
-      } else {
-        ret = -1;
-      }*/
-      if (i >= 8) {
-        ret_vec = _mm256_mask_mov_epi32(_mm256_set1_epi32(-1), if_mask,
-          fast_flows_packet_vec(ctx_vec, bhs_vec_1,
-            _mm512_mask_i64gather_epi64(_mm512_undefined_epi32(), if_mask, fss_vec_1, NULL, 1),
-            tcpopts_vec_1, ts_vec, if_mask
-          )
-        );
-      } else {
-        ret_vec = _mm256_mask_mov_epi32(_mm256_set1_epi32(-1), if_mask,
-          fast_flows_packet_vec(ctx_vec, bhs_vec_0,
-            _mm512_mask_i64gather_epi64(_mm512_undefined_epi32(), if_mask, fss_vec_0, NULL, 1),
-            tcpopts_vec_0, ts_vec, if_mask
-          )
-        );
-      }
-
-      cmp = _mm256_cmpgt_epi32_mask(ret_vec, _mm256_set1_epi32(0));
-      if_mask = _kand_mask8(cmp, masks[i]);
-      if (i >= 8) {
-        _mm512_mask_i64scatter_epi8_custom(if_mask, freebuf_vec_1, _mm256_set1_epi32(1));
-      } else {
-        _mm512_mask_i64scatter_epi8_custom(if_mask, freebuf_vec_0, _mm256_set1_epi32(1));
-      }
-      cmp = _kandn_mask8(cmp, _mm256_cmplt_epi32_mask(ret_vec, _mm256_set1_epi32(0)));
-      if_mask = _kand_mask8(cmp, masks[i]);
-      if (i >= 8) {
-        fast_kernel_packet_vec(ctx_vec, bhs_vec_1, if_mask);
-      } else {
-        fast_kernel_packet_vec(ctx_vec, bhs_vec_0, if_mask);
-      }
-
-      /*
-    if (ret > 0) {
-      freebuf[i] = 1;
-    } else if (ret < 0) {
-      fast_kernel_packet(ctx, bhs[i]);
-    }
-      */
-    }
-
->>>>>>> opt_doublebatch
   //}
 
   arx_cache_flush(ctx, tsc);
