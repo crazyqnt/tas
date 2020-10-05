@@ -355,14 +355,6 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
       (uintptr_t) (tcpopts + 13), (uintptr_t) (tcpopts + 12), (uintptr_t) (tcpopts + 11),
       (uintptr_t) (tcpopts + 10), (uintptr_t) (tcpopts + 9), (uintptr_t) (tcpopts + 8)  
     );
-    __m512i freebuf_vec_0 = _mm512_set_epi64((uintptr_t) (freebuf + 7), (uintptr_t) (freebuf + 6),
-      (uintptr_t) (freebuf + 5), (uintptr_t) (freebuf + 4), (uintptr_t) (freebuf + 3),
-      (uintptr_t) (freebuf + 2), (uintptr_t) (freebuf + 1), (uintptr_t) (freebuf + 0)  
-    );
-    __m512i freebuf_vec_1 = _mm512_set_epi64((uintptr_t) (freebuf + 15), (uintptr_t) (freebuf + 14),
-      (uintptr_t) (freebuf + 13), (uintptr_t) (freebuf + 12), (uintptr_t) (freebuf + 11),
-      (uintptr_t) (freebuf + 10), (uintptr_t) (freebuf + 9), (uintptr_t) (freebuf + 8)  
-    );
     __mmask8 mask_0 = _cvtu32_mask8((1 << n0) - 1);
     __mmask8 mask_1 = _cvtu32_mask8((1 << n1) - 1);
 
