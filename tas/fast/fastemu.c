@@ -163,7 +163,7 @@ void dataplane_loop(struct dataplane_context *ctx)
 #ifdef DEBUG_STATS
     if (prev_cyc / DEBUG_PRINT_INTERVAL != cyc / DEBUG_PRINT_INTERVAL) {
       fprintf(stderr, "debug stats: queue: ");
-      for (unsigned i = 0; i < 8; i++) {
+      for (unsigned i = 0; i < 16; i++) {
         if (i == 0) {
           fprintf(stderr, "%lu", ctx->packets_queued[i]);
         } else {

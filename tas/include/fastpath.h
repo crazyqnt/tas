@@ -97,7 +97,7 @@ struct dataplane_context {
 
   uint64_t kernel_drop;
 #ifdef DEBUG_STATS
-  uint64_t packets_queued[8];
+  uint64_t packets_queued[16];
   uint64_t packets_processed[8];
 #endif
 #ifdef DATAPLANE_STATS
