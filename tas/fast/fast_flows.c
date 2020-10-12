@@ -1206,7 +1206,7 @@ void fast_flows_packet_fss(struct dataplane_context *ctx,
           (fs->local_port == p->tcp.dest) &
           (fs->remote_port == p->tcp.src))
       {
-        //rte_prefetch0((uint8_t *) fs + 64);
+        rte_prefetch0((uint8_t *) fs + 64);
         *fss = &fp_state->flowst[fid];
         break;
       }
