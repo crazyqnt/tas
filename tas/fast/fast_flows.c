@@ -1135,7 +1135,7 @@ static inline uint32_t flow_hash(struct flow_key *k)
       crc32c_sse42_u64(k->local_ip | (((uint64_t) k->remote_ip) << 32), 0));
 }
 
-#pragma vectorize
+#pragma vectorize alive_check
 void fast_flows_packet_fss(struct dataplane_context *ctx,
     struct network_buf_handle *nbhs, void **fss)
 {
