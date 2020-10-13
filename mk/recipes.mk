@@ -8,7 +8,7 @@ POSTCOMPILE_DEPS = mv -f $(@:.o=.Td) $(@:.o=.d)
 COMPILE.c = $(CC) $(DEPFLAGS) $(CFLAGS) $(CPPFLAGS) -c
 %.o: %.c
 %.o: %.c %.d
-	$(VECTORIZER) $< -m -o $(<:.c=.vc) -dl -- $(CFLAGS) $(CPPFLAGS)
+	$(VECTORIZER) $< -m -o $(<:.c=.vc) -dl -ds -- $(CFLAGS) $(CPPFLAGS)
 	$(COMPILE.c) $(OUTPUT_OPTION.c) -x c $(<:.c=.vc)
 	@$(POSTCOMPILE_DEPS)
 

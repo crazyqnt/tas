@@ -1128,11 +1128,19 @@ void fast_flows_kernelxsums(struct network_buf_handle *nbh,
       f_beui16(p->ip.len) - sizeof(p->ip));
 }
 
-#pragma vectorize to_scalar
+
 static inline uint32_t flow_hash(struct flow_key *k)
 {
   return crc32c_sse42_u32(k->local_port | (((uint32_t) k->remote_port) << 16),
       crc32c_sse42_u64(k->local_ip | (((uint64_t) k->remote_ip) << 32), 0));
+}
+
+#pragma vectorize to_scalar
+static inline uint32_t flow_hash_and_double_prefetch(struct flow_key *k) {
+  uint32_t hash = flow_hash(k);
+  rte_prefetch0(&fp_state->flowht[hash % FLEXNIC_PL_FLOWHT_ENTRIES]);
+  rte_prefetch0(&fp_state->flowht[(hash + 3) % FLEXNIC_PL_FLOWHT_ENTRIES]);
+  return hash;
 }
 
 #pragma vectorize alive_check
@@ -1154,10 +1162,11 @@ void fast_flows_packet_fss(struct dataplane_context *ctx,
     key.remote_ip = p->ip.src;
     key.local_port = p->tcp.dest;
     key.remote_port = p->tcp.src;
-    hash = flow_hash(&key);
+    //hash = flow_hash(&key);
 
-    rte_prefetch0(&fp_state->flowht[hash % FLEXNIC_PL_FLOWHT_ENTRIES]);
-    rte_prefetch0(&fp_state->flowht[(hash + 3) % FLEXNIC_PL_FLOWHT_ENTRIES]);
+    //rte_prefetch0(&fp_state->flowht[hash % FLEXNIC_PL_FLOWHT_ENTRIES]);
+    //rte_prefetch0(&fp_state->flowht[(hash + 3) % FLEXNIC_PL_FLOWHT_ENTRIES]);
+    hash = flow_hash_and_double_prefetch(&key);
     //hash = h;
   //}
 
