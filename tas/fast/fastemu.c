@@ -372,8 +372,8 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
     rte_prefetch0(network_buf_bufoff(bhs[i]));
   }
   */
-    rte_prefetch0_vec(network_buf_bufoff_vec(bhs_vec_0, mask_0), mask_0);
-    rte_prefetch0_vec(network_buf_bufoff_vec(bhs_vec_1, mask_1), mask_1);
+    //rte_prefetch0_vec(network_buf_bufoff_vec(bhs_vec_0, mask_0), mask_0);
+    //rte_prefetch0_vec(network_buf_bufoff_vec(bhs_vec_1, mask_1), mask_1);
 
   /* look up flow states */
   //fast_flows_packet_fss(ctx, bhs, fss, n);
@@ -388,8 +388,8 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
     rte_prefetch0(network_buf_bufoff(bhs[i]) + 64);
   }
   */
-    rte_prefetch0_vec(_mm512_add_epi64(network_buf_bufoff_vec(bhs_vec_0, mask_0), _mm512_set1_epi64(64)), mask_0);
-    rte_prefetch0_vec(_mm512_add_epi64(network_buf_bufoff_vec(bhs_vec_1, mask_1), _mm512_set1_epi64(64)), mask_1);
+    //rte_prefetch0_vec(_mm512_add_epi64(network_buf_bufoff_vec(bhs_vec_0, mask_0), _mm512_set1_epi64(64)), mask_0);
+    //rte_prefetch0_vec(_mm512_add_epi64(network_buf_bufoff_vec(bhs_vec_1, mask_1), _mm512_set1_epi64(64)), mask_1);
 
   /* parse packets */
   //fast_flows_packet_parse(ctx, bhs, fss, tcpopts, n);

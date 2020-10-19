@@ -1135,6 +1135,16 @@ static inline uint32_t flow_hash(struct flow_key *k)
       crc32c_sse42_u64(k->local_ip | (((uint64_t) k->remote_ip) << 32), 0));
 }
 
+#pragma vectorize
+static inline uint32_t flow_hash_new(beui32_t local_ip, beui32_t remote_ip, beui16_t local_port, beui16_t remote_port) {
+  uint32_t hash = 13;
+  hash = 31 * hash + local_ip; // TODO: opt with shift and subtraction? also remove first multiplication
+  hash = 31 * hash + remote_ip;
+  hash = 31 * hash + local_port;
+  hash = 31 * hash + remote_port;
+  return hash;
+}
+
 #pragma vectorize to_scalar
 static inline uint32_t flow_hash_and_double_prefetch(struct flow_key *k) {
   uint32_t hash = flow_hash(k);
@@ -1150,7 +1160,6 @@ void fast_flows_packet_fss(struct dataplane_context *ctx,
   uint32_t hash;
   uint32_t k, j, eh, fid, ffid;
   struct pkt_tcp *p;
-  struct flow_key key;
   struct flextcp_pl_flowhte *e;
   struct flextcp_pl_flowst *fs;
 
@@ -1162,15 +1171,12 @@ void fast_flows_packet_fss(struct dataplane_context *ctx,
   beui16_t p_tcp_dest = p->tcp.dest;
   beui16_t p_tcp_src = p->tcp.src;
 
-    key.local_ip = p_ip_dest;
-    key.remote_ip = p_ip_src;
-    key.local_port = p_tcp_dest;
-    key.remote_port = p_tcp_src;
     //hash = flow_hash(&key);
+    hash = flow_hash_new(p_ip_dest, p_ip_src, p_tcp_dest, p_tcp_src);
 
     //rte_prefetch0(&fp_state->flowht[hash % FLEXNIC_PL_FLOWHT_ENTRIES]);
     //rte_prefetch0(&fp_state->flowht[(hash + 3) % FLEXNIC_PL_FLOWHT_ENTRIES]);
-    hash = flow_hash_and_double_prefetch(&key);
+    //hash = flow_hash_and_double_prefetch(&key);
     //hash = h;
   //}
 
@@ -1178,6 +1184,7 @@ void fast_flows_packet_fss(struct dataplane_context *ctx,
    * (usually 1 per packet, except in case of collisions) */
   //for (i = 0; i < n; i++) {
     //h = hashes[i];
+    /*
     for (j = 0; j < FLEXNIC_PL_FLOWHT_NBSZ; j++) {
       k = (hash + j) % FLEXNIC_PL_FLOWHT_ENTRIES;
       e = &fp_state->flowht[k];
@@ -1192,6 +1199,7 @@ void fast_flows_packet_fss(struct dataplane_context *ctx,
       }
       rte_prefetch0(&fp_state->flowst[fid]);
     }
+    */
   //}
 
   /* finish hash table lookup by checking 5-tuple in flow state */
@@ -1220,7 +1228,7 @@ void fast_flows_packet_fss(struct dataplane_context *ctx,
           (fs->local_port == p_tcp_dest) &
           (fs->remote_port == p_tcp_src))
       {
-        rte_prefetch0((uint8_t *) fs + 64);
+        //rte_prefetch0((uint8_t *) fs + 64);
         *fss = &fp_state->flowst[fid];
         break;
       }

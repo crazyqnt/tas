@@ -589,6 +589,7 @@ static inline volatile struct flextcp_pl_ktx *ktx_try_alloc(uint32_t core,
 static inline uint32_t flow_hash(ip_addr_t lip, beui16_t lp,
     ip_addr_t rip, beui16_t rp)
 {
+  /*
   struct {
     ip_addr_t lip;
     ip_addr_t rip;
@@ -598,7 +599,15 @@ static inline uint32_t flow_hash(ip_addr_t lip, beui16_t lp,
       { .lip = lip, .rip = rip, .lp = lp, .rp = rp };
   MEM_BARRIER();
   return rte_hash_crc(&hk, sizeof(hk), 0);
+  */
+  uint32_t hash = 13;
+  hash = hash * 31 + lip;
+  hash = hash * 31 + rip;
+  hash = hash * 31 + lp;
+  hash = hash * 31 + rp;
+  return hash;
 }
+
 
 static inline int flow_slot_alloc(uint32_t h, uint32_t *pi, uint32_t *pd)
 {
