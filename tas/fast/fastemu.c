@@ -135,8 +135,11 @@ int dataplane_context_init(struct dataplane_context *ctx)
   fp_state->kctx[ctx->id].evfd = ctx->evfd;
 
 #ifdef DEBUG_STATS
-  memset(ctx->packets_queued, 0, sizeof(uint64_t) * 8);
+  memset(ctx->packets_queued, 0, sizeof(uint64_t) * 16);
   memset(ctx->packets_processed, 0, sizeof(uint64_t) * 8);
+#endif
+#ifdef FFPACKET_STATS
+  memset(ctx->ffp_pos, 0, sizeof(uint64_t) * 16);
 #endif
 
   return 0;
@@ -176,6 +179,19 @@ void dataplane_loop(struct dataplane_context *ctx)
           fprintf(stderr, "%lu", ctx->packets_processed[i]);
         } else {
           fprintf(stderr, "/ %lu", ctx->packets_processed[i]);
+        }
+      }
+      fprintf(stderr, "\n");
+    }
+#endif
+#ifdef FFPACKET_STATS
+    if (prev_cyc / DEBUG_PRINT_INTERVAL != cyc / DEBUG_PRINT_INTERVAL) {
+      fprintf(stderr, "ffpacket stats: ");
+      for (unsigned i = 0; i < 16; i++) {
+        if (i == 0) {
+          fprintf(stderr, "%lu", ctx->ffp_pos[i]);
+        } else {
+          fprintf(stderr, "/ %lu", ctx->ffp_pos[i]);
         }
       }
       fprintf(stderr, "\n");

@@ -296,6 +296,20 @@ void fast_flows_packet_pfbufs(struct dataplane_context *ctx,
   //rte_prefetch0(p);
 }
 
+void inline add_stat(uint64_t* pos, uint64_t by) {
+  *pos += by;
+}
+
+void inline add_stat_vec(__m512i pos, __m512i by, __mmask8 m) {
+  if (_cvtmask8_u32(m) != 0) {
+    __m128i lower_pos = _mm512_extracti64x2_epi64(pos, 0);
+    __m128i lower_by = _mm512_extracti64x2_epi64(by, 0);
+    uint64_t i_pos = _mm_extract_epi64(lower_pos, 0);
+    uint64_t i_by = _mm_extract_epi64(lower_by, 0);
+    *((uint64_t*) i_pos) += i_by;
+  }
+}
+
 /* Received packet */
 #pragma vectorize alive_check
 int fast_flows_packet(struct dataplane_context *ctx,
@@ -318,6 +332,11 @@ int fast_flows_packet(struct dataplane_context *ctx,
   payload_bytes =
       f_beui16(p->ip.len) - (sizeof(p->ip) + sizeof(p->tcp) + tcp_extra_hlen);
   orig_payload = payload_bytes;
+
+#ifdef FFPACKET_STATS
+  add_stat(&ctx->ffp_pos[0], 1);
+#endif
+  uint32_t _tcph_flags = TCPH_FLAGS(&p->tcp);
 
 #if PL_DEBUG_ARX
   fprintf(stderr, "FLOW local=%08x:%05u remote=%08x:%05u  RX: seq=%u ack=%u "
@@ -371,11 +390,14 @@ int fast_flows_packet(struct dataplane_context *ctx,
   }
 
   /* if we get weird flags -> kernel */
-  if (UNLIKELY((TCPH_FLAGS(&p->tcp) & ~(TCP_ACK | TCP_PSH | TCP_ECE | TCP_CWR |
+  if (UNLIKELY((_tcph_flags & ~(TCP_ACK | TCP_PSH | TCP_ECE | TCP_CWR |
             TCP_FIN)) != 0))
   {
     ALIVE_CHECK();
-    if ((TCPH_FLAGS(&p->tcp) & TCP_SYN) != 0) {
+#ifdef FFPACKET_STATS
+    add_stat(&ctx->ffp_pos[1], 1);
+#endif
+    if ((_tcph_flags & TCP_SYN) != 0) {
       /* for SYN/SYN-ACK we'll let the kernel handle them out of band */
       no_permanent_sp = 1;
     } else {
@@ -402,22 +424,29 @@ int fast_flows_packet(struct dataplane_context *ctx,
 #endif
 
   /* Stats for CC */
-  if ((TCPH_FLAGS(&p->tcp) & TCP_ACK) == TCP_ACK) {
+  if ((_tcph_flags & TCP_ACK) == TCP_ACK) {
     fs->cnt_rx_acks++;
   }
 
   /* if there is a valid ack, process it */
-  if (LIKELY((TCPH_FLAGS(&p->tcp) & TCP_ACK) == TCP_ACK &&
+  if (LIKELY((_tcph_flags & TCP_ACK) == TCP_ACK &&
       tcp_valid_rxack(fs, ack, &tx_bump) == 0))
   {
+#ifdef FFPACKET_STATS
+    add_stat(&ctx->ffp_pos[2], 1);
+#endif
     fs->cnt_rx_ack_bytes += tx_bump;
-    if ((TCPH_FLAGS(&p->tcp) & TCP_ECE) == TCP_ECE) {
+    if ((_tcph_flags & TCP_ECE) == TCP_ECE) {
       fs->cnt_rx_ecn_bytes += tx_bump;
     }
 
     if (LIKELY(tx_bump <= fs->tx_sent)) {
       fs->tx_sent -= tx_bump;
     } else {
+      ALIVE_CHECK();
+#ifdef FFPACKET_STATS
+    add_stat(&ctx->ffp_pos[3], 1);
+#endif
 #ifdef ALLOW_FUTURE_ACKS
       fs->tx_next_seq += tx_bump - fs->tx_sent;
       fs->tx_next_pos += tx_bump - fs->tx_sent;
@@ -436,6 +465,10 @@ int fast_flows_packet(struct dataplane_context *ctx,
     if (UNLIKELY(tx_bump != 0)) {
       fs->rx_dupack_cnt = 0;
     } else if (UNLIKELY(orig_payload == 0 && ++fs->rx_dupack_cnt >= 3)) {
+      ALIVE_CHECK();
+#ifdef FFPACKET_STATS
+      add_stat(&ctx->ffp_pos[4], 1);
+#endif
       /* reset to last acknowledged position */
       flow_reset_retransmit(fs);
       goto unlock;
@@ -459,6 +492,9 @@ int fast_flows_packet(struct dataplane_context *ctx,
   /* handle out of order segment */
   if (UNLIKELY(seq != fs->rx_next_seq)) {
     ALIVE_CHECK();
+#ifdef FFPACKET_STATS
+    add_stat(&ctx->ffp_pos[5], 1);
+#endif
     trigger_ack = 1;
 
     /* if there is no payload abort immediately */
@@ -468,12 +504,18 @@ int fast_flows_packet(struct dataplane_context *ctx,
 
     /* otherwise check if we can add it to the out of order interval */
     if (fs->rx_ooo_len == 0) {
+#ifdef FFPACKET_STATS
+      add_stat(&ctx->ffp_pos[6], 1);
+#endif
       fs->rx_ooo_start = seq;
       fs->rx_ooo_len = payload_bytes;
       flow_rx_seq_write(fs, seq, payload_bytes, payload);
       /*fprintf(stderr, "created OOO interval (%p start=%u len=%u)\n",
           fs, fs->rx_ooo_start, fs->rx_ooo_len);*/
     } else if (seq + payload_bytes == fs->rx_ooo_start) {
+#ifdef FFPACKET_STATS
+      add_stat(&ctx->ffp_pos[7], 1);
+#endif
       /* TODO: those two overlap checks should be more sophisticated */
       fs->rx_ooo_start = seq;
       fs->rx_ooo_len += payload_bytes;
@@ -481,6 +523,9 @@ int fast_flows_packet(struct dataplane_context *ctx,
       /*fprintf(stderr, "extended OOO interval (%p start=%u len=%u)\n",
           fs, fs->rx_ooo_start, fs->rx_ooo_len);*/
     } else if (fs->rx_ooo_start + fs->rx_ooo_len == seq) {
+#ifdef FFPACKET_STATS
+      add_stat(&ctx->ffp_pos[8], 1);
+#endif
       /* TODO: those two overlap checks should be more sophisticated */
       fs->rx_ooo_len += payload_bytes;
       flow_rx_seq_write(fs, seq, payload_bytes, payload);
@@ -514,9 +559,12 @@ int fast_flows_packet(struct dataplane_context *ctx,
 
   /* update rtt estimate */
   fs->tx_next_ts = f_beui32(opts->ts->ts_val);
-  if (LIKELY((TCPH_FLAGS(&p->tcp) & TCP_ACK) == TCP_ACK &&
+  if (LIKELY((_tcph_flags & TCP_ACK) == TCP_ACK &&
       f_beui32(opts->ts->ts_ecr) != 0))
   {
+#ifdef FFPACKET_STATS
+    add_stat(&ctx->ffp_pos[9], 1);
+#endif
     rtt = ts - f_beui32(opts->ts->ts_ecr);
     if (rtt < TCP_MAX_RTT) {
       if (LIKELY(fs->rtt_est != 0)) {
@@ -541,6 +589,9 @@ int fast_flows_packet(struct dataplane_context *ctx,
   /* if there is payload, dma it to the receive buffer */
   if (payload_bytes > 0) {
     ALIVE_CHECK();
+#ifdef FFPACKET_STATS
+    add_stat(&ctx->ffp_pos[10], 1);
+#endif
     flow_rx_write(fs, fs->rx_next_pos, payload_bytes, payload);
 
     rx_bump = payload_bytes;
@@ -560,6 +611,9 @@ int fast_flows_packet(struct dataplane_context *ctx,
      * or superfluous */
     if (UNLIKELY(fs->rx_ooo_len != 0)) {
       ALIVE_CHECK();
+#ifdef FFPACKET_STATS
+      add_stat(&ctx->ffp_pos[11], 1);
+#endif
       if (tcp_trim_rxbuf(fs, fs->rx_ooo_start, fs->rx_ooo_len, &trim_start,
             &trim_end) != 0) {
           /*fprintf(stderr, "dropping ooo (%p ooo.start=%u ooo.len=%u seq=%u "
@@ -597,10 +651,13 @@ int fast_flows_packet(struct dataplane_context *ctx,
 #endif
   }
 
-  if ((TCPH_FLAGS(&p->tcp) & TCP_FIN) == TCP_FIN &&
+  if ((_tcph_flags & TCP_FIN) == TCP_FIN &&
       !(fs->rx_base_sp & FLEXNIC_PL_FLOWST_RXFIN))
   {
     ALIVE_CHECK();
+#ifdef FFPACKET_STATS
+    add_stat(&ctx->ffp_pos[12], 1);
+#endif
     if (fs->rx_next_seq == f_beui32(p->tcp.seqno) + orig_payload && !fs->rx_ooo_len) {
       ALIVE_CHECK();
       fin_bump = 1;

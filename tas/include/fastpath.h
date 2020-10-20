@@ -100,6 +100,9 @@ struct dataplane_context {
   uint64_t packets_queued[16];
   uint64_t packets_processed[8];
 #endif
+#ifdef FFPACKET_STATS
+  uint64_t ffp_pos[16];
+#endif
 #ifdef DATAPLANE_STATS
   /********************************************************/
   /* Stats */
