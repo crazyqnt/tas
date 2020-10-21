@@ -49,7 +49,7 @@
 //#define DATAPLANE_STATS
 //#define DEBUG_STATS
 #define DEBUG_PRINT_INTERVAL 5000000000
-#define FFPACKET_STATS
+//#define FFPACKET_STATS
 
 extern int exited;
 extern unsigned fp_cores_max;
