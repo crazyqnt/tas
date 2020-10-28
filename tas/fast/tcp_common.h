@@ -169,6 +169,55 @@ static inline int tcp_trim_rxbuf(struct flextcp_pl_flowst *fs,
   return 0;
 }
 
+#pragma vectorize
+static inline int tcp_trim_rxbuf_new(uint32_t fs_rx_next_seq, uint32_t fs_rx_avail,
+    uint32_t pkt_seq, uint16_t pkt_bytes, uint16_t *trim_start,
+    uint16_t *trim_end)
+{
+  uint32_t pseq_a = pkt_seq, pseq_b = pkt_seq + pkt_bytes;
+  uint32_t sseq_a = fs_rx_next_seq, sseq_b = fs_rx_next_seq + fs_rx_avail;
+
+  if (pseq_a <= pseq_b && sseq_a <= sseq_b) {
+    /* neither packet interval nor receive buffer split */
+
+    /* packet ends before start of receive buffer */
+    if (pseq_b < sseq_a)
+      return -1;
+
+    /* packet starts after end of receive buffer */
+    if (pseq_a > sseq_b)
+      return -1;
+
+    *trim_start = (pseq_a < sseq_a ? sseq_a - pseq_a : 0);
+    *trim_end = (pseq_b > sseq_b ? pseq_b - sseq_b : 0);
+  } else if (pseq_a <= pseq_b && sseq_a > sseq_b) {
+    /* packet interval not split, but receive buffer split */
+
+    /* packet ends before start of receive buffer */
+    if (pseq_a > sseq_b && pseq_b < sseq_a)
+      return -1;
+
+    *trim_start = (pseq_a > sseq_b && pseq_a < sseq_a ? sseq_a - pseq_a : 0);
+    *trim_end = (pseq_b >= sseq_b && pseq_b < sseq_a ? pseq_b - sseq_b : 0);
+  } else if (pseq_a > pseq_b && sseq_a <= sseq_b) {
+    /* packet interval split, receive buffer not split */
+
+    /* packet ends before start of receive buffer */
+    if (pseq_a > sseq_b && pseq_b < sseq_a)
+      return -1;
+
+    *trim_start = (sseq_a <= pseq_b || sseq_a > pseq_a ? sseq_a - pseq_a : 0);
+    *trim_end = (pseq_b > sseq_b || sseq_a >= pseq_a ? pseq_b - sseq_b : 0);
+  } else {
+    /* both intervals split
+     * Note this means that there is at least some overlap. */
+    *trim_start = (pseq_a < sseq_a ? sseq_a - pseq_a: 0);
+    *trim_end = (pseq_b > sseq_b ? pseq_b - sseq_b : 0);
+  }
+
+  return 0;
+}
+
 /**
  * Check if received ack number is valid, i.e. greater than or equal to the
  * current ack number.
@@ -188,6 +237,32 @@ static inline int tcp_valid_rxack(struct flextcp_pl_flowst *fs, uint32_t ack,
 #ifdef ALLOW_FUTURE_ACKS
   /* number of available unsent bytes in send buffer */
   fsack_b += fs->tx_avail;
+#endif
+
+  if (fsack_a <= fsack_b) {
+    if (ack < fsack_a || ack > fsack_b)
+      return -1;
+
+    *bump = ack - fsack_a;
+    return 0;
+  } else {
+    if (fsack_a > ack && ack > fsack_b)
+      return -1;
+
+    *bump = ack - fsack_a;
+    return 0;
+  }
+}
+
+#pragma vectorize
+static inline int tcp_valid_rxack_new(uint32_t fs_tx_next_seq, uint32_t fs_tx_sent, uint32_t fs_tx_avail, uint32_t ack,
+    uint32_t *bump)
+{
+  uint32_t fsack_a = fs_tx_next_seq - fs_tx_sent, fsack_b = fs_tx_next_seq;
+
+#ifdef ALLOW_FUTURE_ACKS
+  /* number of available unsent bytes in send buffer */
+  fsack_b += fs_tx_avail;
 #endif
 
   if (fsack_a <= fsack_b) {
@@ -244,19 +319,21 @@ struct tcp_opts {
  *
  * @return 0 if parsed successful, -1 otherwise.
  */
-#pragma vectorize to_scalar
+#pragma vectorize
 static inline int tcp_parse_options(const struct pkt_tcp *p, uint16_t len,
     struct tcp_opts *opts)
 {
   uint8_t *opt = (uint8_t *) (p + 1);
-  uint16_t opts_len = TCPH_HDRLEN(&p->tcp) * 4 - 20;
+  // Network order is big endian, CPU is little endian
+  uint16_t tcp_hdrlen = __bswap_16(p->tcp._hdrlen_rsvd_flags) >> 12;
+  uint16_t opts_len = tcp_hdrlen * 4 - 20;
   uint16_t off = 0;
   uint8_t opt_kind, opt_len, opt_avail;
 
   opts->ts = NULL;
 
   /* whole header not in buf */
-  if (TCPH_HDRLEN(&p->tcp) < 5 || opts_len > (len - sizeof(*p))) {
+  if (tcp_hdrlen < 5 || opts_len > (len - sizeof(*p))) {
     //fprintf(stderr, "hlen=%u opts_len=%u len=%u so=%zu\n", TCPH_HDRLEN(&p->tcp), opts_len, len, sizeof(*p));
     return -1;
   }

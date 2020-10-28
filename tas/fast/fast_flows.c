@@ -263,13 +263,15 @@ void fast_flows_packet_parse(struct dataplane_context *ctx,
 
     p = network_buf_bufoff(nbhs);
     len = network_buf_len(nbhs);
+    uint8_t ip_v_hl = p->ip._v_hl;
 
     int cond =
         (len < sizeof(*p)) |
         (f_beui16(p->eth.type) != ETH_TYPE_IP) |
         (p->ip.proto != IP_PROTO_TCP) |
-        (IPH_V(&p->ip) != 4) |
-        (IPH_HL(&p->ip) != 5) |
+        //(IPH_V(&p->ip) != 4) |
+        ((ip_v_hl >> 4) != 4) |
+        ((ip_v_hl & 0x0F) != 5) |
         (TCPH_HDRLEN(&p->tcp) < 5) |
         (len < f_beui16(p->ip.len) + sizeof(p->eth)) |
         (tcp_parse_options(p, len, tos) != 0) |
@@ -429,9 +431,12 @@ int fast_flows_packet(struct dataplane_context *ctx,
     fs->cnt_rx_acks++;
   }
 
+  uint32_t fs_tx_sent = fs->tx_sent;
+  uint32_t fs_tx_avail = fs->tx_avail;
+  uint32_t fs_tx_next_seq = fs->tx_next_seq;
   /* if there is a valid ack, process it */
   if (LIKELY((_tcph_flags & TCP_ACK) == TCP_ACK &&
-      tcp_valid_rxack(fs, ack, &tx_bump) == 0))
+      tcp_valid_rxack_new(fs_tx_next_seq, fs_tx_sent, fs_tx_avail, ack, &tx_bump) == 0))
   {
 #ifdef FFPACKET_STATS
     add_stat(&ctx->ffp_pos[2], 1);
@@ -440,8 +445,7 @@ int fast_flows_packet(struct dataplane_context *ctx,
     if ((_tcph_flags & TCP_ECE) == TCP_ECE) {
       fs->cnt_rx_ecn_bytes += tx_bump;
     }
-    
-    uint32_t fs_tx_sent = fs->tx_sent;
+
     if (LIKELY(tx_bump <= fs_tx_sent)) {
       fs->tx_sent = fs_tx_sent - tx_bump;
     } else {
@@ -450,14 +454,14 @@ int fast_flows_packet(struct dataplane_context *ctx,
     add_stat(&ctx->ffp_pos[3], 1);
 #endif
 #ifdef ALLOW_FUTURE_ACKS
-      fs->tx_next_seq += tx_bump - fs_tx_sent;
+      fs->tx_next_seq = fs_tx_next_seq + tx_bump - fs_tx_sent;
       uint32_t fs_tx_next_pos = fs->tx_next_pos + tx_bump - fs_tx_sent;
       uint32_t fs_tx_len = fs->tx_len;
       //fs->tx_next_pos += tx_bump - fs_tx_sent;
       if (fs_tx_next_pos >= fs_tx_len)
         fs_tx_next_pos -= fs_tx_len;
       fs->tx_next_pos = fs_tx_next_pos;
-      fs->tx_avail -= tx_bump - fs_tx_sent;
+      fs->tx_avail = fs_tx_avail - tx_bump - fs_tx_sent;
       fs->tx_sent = 0;
 #else
       /* this should not happen */
@@ -481,8 +485,10 @@ int fast_flows_packet(struct dataplane_context *ctx,
   }
 
 #ifdef FLEXNIC_PL_OOO_RECV
+  uint32_t fs_rx_avail = fs->rx_avail;
+  uint32_t fs_rx_next_seq = fs->rx_next_seq;
   /* check if we should drop this segment */
-  if (UNLIKELY(tcp_trim_rxbuf(fs, seq, payload_bytes, &trim_start, &trim_end) != 0)) {
+  if (UNLIKELY(tcp_trim_rxbuf_new(fs_rx_next_seq, fs_rx_avail, seq, payload_bytes, &trim_start, &trim_end) != 0)) {
     /* packet is completely outside of unused receive buffer */
     trigger_ack = 1;
     goto unlock;
@@ -495,7 +501,6 @@ int fast_flows_packet(struct dataplane_context *ctx,
   seq += trim_start;
 
   /* handle out of order segment */
-  uint32_t fs_rx_next_seq = fs->rx_next_seq;
   if (UNLIKELY(seq != fs_rx_next_seq)) {
     ALIVE_CHECK();
 #ifdef FFPACKET_STATS
@@ -600,7 +605,6 @@ int fast_flows_packet(struct dataplane_context *ctx,
   }
 
   /* if there is payload, dma it to the receive buffer */
-  uint32_t fs_rx_avail = fs->rx_avail;
   uint32_t fs_rx_next_pos = fs->rx_next_pos;
   uint32_t fs_rx_ooo_len = fs->rx_ooo_len;
   if (payload_bytes > 0) {
@@ -749,7 +753,7 @@ unlock:
 
   /* if we need to send an ack, also send packet to TX pipeline to do so */
   if (trigger_ack) {
-    flow_tx_ack(ctx, fs->tx_next_seq, fs_rx_next_seq, fs_rx_avail,
+    flow_tx_ack(ctx, fs_tx_next_seq, fs_rx_next_seq, fs_rx_avail,
         fs_tx_next_ts, ts, nbh, opts->ts);
   }
 
