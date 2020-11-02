@@ -383,11 +383,10 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
     __mmask8 mask_1 = _cvtu32_mask8((1 << n1) - 1);
 
   /* prefetch packet contents (1st cache line) */
-  /*
-  for (i = 0; i < n; i++) {
-    rte_prefetch0(network_buf_bufoff(bhs[i]));
-  }
-  */
+  
+    for (i = 0; i < n; i++) {
+      rte_prefetch0(network_buf_bufoff(bhs[i]));
+    }
     //rte_prefetch0_vec(network_buf_bufoff_vec(bhs_vec_0, mask_0), mask_0);
     //rte_prefetch0_vec(network_buf_bufoff_vec(bhs_vec_1, mask_1), mask_1);
 
@@ -399,11 +398,11 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
     //d_print_512u(_mm512_mask_i64gather_epi64(_mm512_set1_epi64(1), mask, fss_vec, NULL, 1), mask);
 
   /* prefetch packet contents (2nd cache line, TS opt overlaps) */
-  /*
-  for (i = 0; i < n; i++) {
-    rte_prefetch0(network_buf_bufoff(bhs[i]) + 64);
-  }
-  */
+  
+    for (i = 0; i < n; i++) {
+      rte_prefetch0(network_buf_bufoff(bhs[i]) + 64);
+    }
+    
     //rte_prefetch0_vec(_mm512_add_epi64(network_buf_bufoff_vec(bhs_vec_0, mask_0), _mm512_set1_epi64(64)), mask_0);
     //rte_prefetch0_vec(_mm512_add_epi64(network_buf_bufoff_vec(bhs_vec_1, mask_1), _mm512_set1_epi64(64)), mask_1);
 
@@ -465,8 +464,27 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
     }
 
     for (i = 0; i < n; i++) {
+      uint32_t maski = _cvtmask8_u32(masks[i]);
+      if (maski == 0) {
+        continue;
+      } else if (_mm_popcnt_u32(maski) == 1) { // if there is only one packet, process it alone using original functions
+        int index = __builtin_ffs(maski);
+        index--;
+        if (i >= 8) {
+          index += 8;
+        }
+        
+        if (fss[index] != NULL) {
+          ret = fast_flows_packet(ctx, bhs[index], fss[index], &tcpopts[index], ts);
+        } else {
+          ret = -1;
+        }
 
-      if (_cvtmask8_u32(masks[i]) == 0) {
+        if (ret > 0) {
+          freebuf[index] = 1;
+        } else if (ret < 0) {
+          fast_kernel_packet(ctx, bhs[index]);
+        }
         continue;
       }
 #ifdef DEBUG_STATS
