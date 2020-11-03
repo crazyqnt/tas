@@ -472,6 +472,7 @@ int fast_flows_packet(struct dataplane_context *ctx,
 
     /* duplicate ack */
     if (UNLIKELY(tx_bump != 0)) {
+      ALIVE_CHECK();
       fs->rx_dupack_cnt = 0;
     } else if (UNLIKELY(orig_payload == 0 && ++fs->rx_dupack_cnt >= 3)) {
       ALIVE_CHECK();
@@ -576,13 +577,14 @@ int fast_flows_packet(struct dataplane_context *ctx,
   /* update rtt estimate */
   uint32_t fs_tx_next_ts = f_beui32(opts->ts->ts_val);
   fs->tx_next_ts = fs_tx_next_ts;
+  uint32_t opts_ts_ts_ecr = f_beui32(opts->ts->ts_ecr);
   if (LIKELY((_tcph_flags & TCP_ACK) == TCP_ACK &&
-      f_beui32(opts->ts->ts_ecr) != 0))
+      opts_ts_ts_ecr != 0))
   {
 #ifdef FFPACKET_STATS
     add_stat(&ctx->ffp_pos[9], 1);
 #endif
-    rtt = ts - f_beui32(opts->ts->ts_ecr);
+    rtt = ts - opts_ts_ts_ecr;
     if (rtt < TCP_MAX_RTT) {
       uint32_t fs_rtt_est = fs->rtt_est;
       if (LIKELY(fs_rtt_est != 0)) {
@@ -962,7 +964,7 @@ out:
 }
 
 /* read `len` bytes from position `pos` in cirucular transmit buffer */
-#pragma vectorize alive_check
+#pragma vectorize to_scalar
 static void flow_tx_read(struct flextcp_pl_flowst *fs, uint32_t pos,
     uint16_t len, void *dst)
 {
@@ -978,7 +980,7 @@ static void flow_tx_read(struct flextcp_pl_flowst *fs, uint32_t pos,
 }
 
 /* write `len` bytes to position `pos` in cirucular receive buffer */
-#pragma vectorize alive_check
+#pragma vectorize to_scalar
 static void flow_rx_write(struct flextcp_pl_flowst *fs, uint32_t pos,
     uint16_t len, const void *src)
 {

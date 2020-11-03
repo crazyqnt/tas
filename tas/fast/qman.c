@@ -238,6 +238,7 @@ static void inline set_impl(struct qman_thread *t, uint32_t idx, uint32_t rate,
 
   if (new_avail && q->avail > 0
       && ((q->flags & (FLAG_INSKIPLIST | FLAG_INNOLIMITL)) == 0)) {
+    ALIVE_CHECK();
     queue_activate(t, q, idx);
   }
 }

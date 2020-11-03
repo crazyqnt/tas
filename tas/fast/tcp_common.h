@@ -178,6 +178,7 @@ static inline int tcp_trim_rxbuf_new(uint32_t fs_rx_next_seq, uint32_t fs_rx_ava
   uint32_t sseq_a = fs_rx_next_seq, sseq_b = fs_rx_next_seq + fs_rx_avail;
 
   if (pseq_a <= pseq_b && sseq_a <= sseq_b) {
+    ALIVE_CHECK();
     /* neither packet interval nor receive buffer split */
 
     /* packet ends before start of receive buffer */
@@ -191,6 +192,7 @@ static inline int tcp_trim_rxbuf_new(uint32_t fs_rx_next_seq, uint32_t fs_rx_ava
     *trim_start = (pseq_a < sseq_a ? sseq_a - pseq_a : 0);
     *trim_end = (pseq_b > sseq_b ? pseq_b - sseq_b : 0);
   } else if (pseq_a <= pseq_b && sseq_a > sseq_b) {
+    ALIVE_CHECK();
     /* packet interval not split, but receive buffer split */
 
     /* packet ends before start of receive buffer */
@@ -200,6 +202,7 @@ static inline int tcp_trim_rxbuf_new(uint32_t fs_rx_next_seq, uint32_t fs_rx_ava
     *trim_start = (pseq_a > sseq_b && pseq_a < sseq_a ? sseq_a - pseq_a : 0);
     *trim_end = (pseq_b >= sseq_b && pseq_b < sseq_a ? pseq_b - sseq_b : 0);
   } else if (pseq_a > pseq_b && sseq_a <= sseq_b) {
+    ALIVE_CHECK();
     /* packet interval split, receive buffer not split */
 
     /* packet ends before start of receive buffer */
@@ -209,6 +212,7 @@ static inline int tcp_trim_rxbuf_new(uint32_t fs_rx_next_seq, uint32_t fs_rx_ava
     *trim_start = (sseq_a <= pseq_b || sseq_a > pseq_a ? sseq_a - pseq_a : 0);
     *trim_end = (pseq_b > sseq_b || sseq_a >= pseq_a ? pseq_b - sseq_b : 0);
   } else {
+    ALIVE_CHECK();
     /* both intervals split
      * Note this means that there is at least some overlap. */
     *trim_start = (pseq_a < sseq_a ? sseq_a - pseq_a: 0);
