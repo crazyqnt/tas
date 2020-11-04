@@ -96,10 +96,13 @@ static inline void queue_activate(struct qman_thread *t, struct queue *q,
     uint32_t idx);
 static inline void queue_activate_vec(__m512i, __m512i, __m256i, __mmask8);
 static inline uint32_t timestamp(void);
+#pragma vectorize
 static inline int timestamp_lessthaneq(struct qman_thread *t, uint32_t a,
     uint32_t b);
+#pragma vectorize
 static inline int64_t rel_time(uint32_t cur_ts, uint32_t ts_in);
 
+static inline __m256i queue_level_vec(__m512i t, __mmask8 k);
 
 int qman_thread_init(struct dataplane_context *ctx)
 {
@@ -299,6 +302,7 @@ static inline unsigned poll_nolimit(struct qman_thread *t, uint32_t cur_ts,
 /*****************************************************************************/
 /* Managing skiplist queues */
 
+#pragma vectorize
 static inline uint32_t queue_new_ts(struct qman_thread *t, struct queue *q,
     uint32_t bytes)
 {
@@ -306,7 +310,7 @@ static inline uint32_t queue_new_ts(struct qman_thread *t, struct queue *q,
 }
 
 /** Add queue to the skip list list */
-#pragma vectorize to_scalar
+#pragma vectorize
 static inline void queue_activate_skiplist(struct qman_thread *t,
     struct queue *q, uint32_t q_idx)
 {
@@ -315,10 +319,10 @@ static inline void queue_activate_skiplist(struct qman_thread *t,
   uint32_t preds[QMAN_SKIPLIST_LEVELS];
   uint32_t pred, idx, ts, max_ts;
 
-  assert((q->flags & (FLAG_INSKIPLIST | FLAG_INNOLIMITL)) == 0);
+  //assert((q->flags & (FLAG_INSKIPLIST | FLAG_INNOLIMITL)) == 0);
 
-  dprintf("queue_activate_skiplist: t=%p q=%p idx=%u avail=%u rate=%u flags=%x ts_virt=%u next_ts=%u\n", t, q, q_idx, q->avail, q->rate, q->flags,
-      t->ts_virtual, q->next_ts);
+  //dprintf("queue_activate_skiplist: t=%p q=%p idx=%u avail=%u rate=%u flags=%x ts_virt=%u next_ts=%u\n", t, q, q_idx, q->avail, q->rate, q->flags,
+  //    t->ts_virtual, q->next_ts);
 
   /* make sure queue has a reasonable next_ts:
    *  - not in the past
@@ -344,12 +348,12 @@ static inline void queue_activate_skiplist(struct qman_thread *t,
       idx = t->queues[idx].next_idxs[l];
     }
     preds[l] = pred;
-    dprintf("    pred[%u] = %d\n", l, pred);
+    //dprintf("    pred[%u] = %d\n", l, pred);
   }
 
   /* determine level for this queue */
   level = queue_level(t);
-  dprintf("    level = %u\n", level);
+  //dprintf("    level = %u\n", level);
 
   /* insert into skip-list */
   for (l = QMAN_SKIPLIST_LEVELS - 1; l >= 0; l--) {
@@ -442,6 +446,41 @@ static inline uint8_t queue_level(struct qman_thread *t)
   return (x < QMAN_SKIPLIST_LEVELS ? x : QMAN_SKIPLIST_LEVELS - 1);
 }
 
+__m256i inline utils_rng_gen32_local_vec(__m512i, __mmask8);
+
+#ifdef ASTVEC_CURRENTLY_VECTORIZING
+__m256i inline utils_rng_gen32_local_vec(__m512i x, __mmask8 k) {
+  return _mm256_set1_epi32(0);
+}
+#endif
+
+#pragma vectorize
+uint32_t inline utils_rng_gen32_local(struct utils_rng *rng)
+{
+  uint64_t next;
+  next = (0x5deece66dULL * rng->seed + 0xb) % (1ULL << 48);
+  rng->seed = next;
+  return next >> 16;
+}
+
+// https://stackoverflow.com/questions/20450643/division-by-3-without-division-operator
+static inline __m256i divby3_vec(__m256i num) {
+  __m512i q = _mm512_mullo_epi64(_mm512_cvtepi32_epi64(num), _mm512_set1_epi64(0x0AAAAAAAB));
+  return _mm512_cvtepi64_epi32(_mm512_srli_epi64(q, 33));
+}
+
+static inline __m256i queue_level_vec(__m512i t, __mmask8 k) {
+  __m256i x;
+  x = utils_rng_gen32_local_vec(_mm512_add_epi64(t, _mm512_set1_epi64(offsetof(struct qman_thread, rng))), k);
+  // assuming every bit is randomly generated with even chances, a count of leading and trailing zeros should produce the same value distribution
+  x = _mm256_sub_epi32(_mm256_set1_epi32(31), _mm256_lzcnt_epi32(x)); // simulate ffs but in reverse bit order
+  // assume SKIPLIST_BITS = 3
+  x = divby3_vec(x);
+
+  __mmask8 cmp = _mm256_cmplt_epi32_mask(x, _mm256_set1_epi32(QMAN_SKIPLIST_LEVELS));
+  return _mm256_mask_blend_epi32(cmp, _mm256_set1_epi32(QMAN_SKIPLIST_LEVELS - 1), x);
+}
+
 /*****************************************************************************/
 
 static inline void queue_fire(struct qman_thread *t,
@@ -479,8 +518,10 @@ static inline void queue_activate(struct qman_thread *t, struct queue *q,
     uint32_t idx)
 {
   if (q->rate == 0) {
+    ALIVE_CHECK();
     queue_activate_nolimit(t, q, idx);
   } else {
+    ALIVE_CHECK();
     queue_activate_skiplist(t, q, idx);
   }
 }
@@ -499,6 +540,7 @@ static inline uint32_t timestamp(void)
 }
 
 /** Relative timestamp, ignoring wrap-arounds */
+#pragma vectorize
 static inline int64_t rel_time(uint32_t cur_ts, uint32_t ts_in)
 {
   uint64_t ts = ts_in;
@@ -506,6 +548,7 @@ static inline int64_t rel_time(uint32_t cur_ts, uint32_t ts_in)
   uint64_t start, end;
 
   if (cur_ts < middle) {
+    ALIVE_CHECK();
     /* negative interval is split in half */
     start = (cur_ts - middle) & TIMESTAMP_MASK;
     end = (1ULL << TIMESTAMP_BITS);
@@ -520,6 +563,7 @@ static inline int64_t rel_time(uint32_t cur_ts, uint32_t ts_in)
     /* intervals not split */
     return ts - cur_ts;
   } else {
+    ALIVE_CHECK();
     /* higher interval is split */
     start = 0;
     end = ((cur_ts + middle) & TIMESTAMP_MASK) + 1;
@@ -533,6 +577,7 @@ static inline int64_t rel_time(uint32_t cur_ts, uint32_t ts_in)
   }
 }
 
+#pragma vectorize
 static inline int timestamp_lessthaneq(struct qman_thread *t, uint32_t a,
     uint32_t b)
 {
