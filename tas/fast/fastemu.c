@@ -319,7 +319,7 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
 {
   int ret;
   unsigned i, n;
-  uint8_t freebuf[BATCH_SIZE] = { 0 };
+  uint32_t freebuf[BATCH_SIZE] = { 0 };
   void *fss[BATCH_SIZE];
   struct tcp_opts tcpopts[BATCH_SIZE];
   struct network_buf_handle *bhs[BATCH_SIZE];
@@ -370,14 +370,6 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
     __m512i tcpopts_vec_1 = _mm512_set_epi64((uintptr_t) (tcpopts + 15), (uintptr_t) (tcpopts + 14),
       (uintptr_t) (tcpopts + 13), (uintptr_t) (tcpopts + 12), (uintptr_t) (tcpopts + 11),
       (uintptr_t) (tcpopts + 10), (uintptr_t) (tcpopts + 9), (uintptr_t) (tcpopts + 8)  
-    );
-    __m512i freebuf_vec_0 = _mm512_set_epi64((uintptr_t) (freebuf + 7), (uintptr_t) (freebuf + 6),
-      (uintptr_t) (freebuf + 5), (uintptr_t) (freebuf + 4), (uintptr_t) (freebuf + 3),
-      (uintptr_t) (freebuf + 2), (uintptr_t) (freebuf + 1), (uintptr_t) (freebuf + 0)  
-    );
-    __m512i freebuf_vec_1 = _mm512_set_epi64((uintptr_t) (freebuf + 15), (uintptr_t) (freebuf + 14),
-      (uintptr_t) (freebuf + 13), (uintptr_t) (freebuf + 12), (uintptr_t) (freebuf + 11),
-      (uintptr_t) (freebuf + 10), (uintptr_t) (freebuf + 9), (uintptr_t) (freebuf + 8)  
     );
     __mmask8 mask_0 = _cvtu32_mask8((1 << n0) - 1);
     __mmask8 mask_1 = _cvtu32_mask8((1 << n1) - 1);
@@ -526,9 +518,11 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
       cmp = _mm256_cmpgt_epi32_mask(ret_vec, _mm256_set1_epi32(0));
       if_mask = _kand_mask8(cmp, masks[i]);
       if (i >= 8) {
-        _mm512_mask_i64scatter_epi8_custom(NULL, if_mask, freebuf_vec_1, _mm256_set1_epi32(1));
+        //_mm512_mask_i64scatter_epi8_custom(NULL, if_mask, freebuf_vec_1, _mm256_set1_epi32(1));
+        _mm256_mask_storeu_epi32(&freebuf[8], if_mask, _mm256_set1_epi32(1));
       } else {
-        _mm512_mask_i64scatter_epi8_custom(NULL, if_mask, freebuf_vec_0, _mm256_set1_epi32(1));
+        //_mm512_mask_i64scatter_epi8_custom(NULL, if_mask, freebuf_vec_0, _mm256_set1_epi32(1));
+        _mm256_mask_storeu_epi32(&freebuf[0], if_mask, _mm256_set1_epi32(1));
       }
       cmp = _kandn_mask8(cmp, _mm256_cmplt_epi32_mask(ret_vec, _mm256_set1_epi32(0)));
       if_mask = _kand_mask8(cmp, masks[i]);
