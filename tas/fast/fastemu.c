@@ -526,9 +526,9 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
       cmp = _mm256_cmpgt_epi32_mask(ret_vec, _mm256_set1_epi32(0));
       if_mask = _kand_mask8(cmp, masks[i]);
       if (i >= 8) {
-        _mm512_mask_i64scatter_epi8_custom(if_mask, freebuf_vec_1, _mm256_set1_epi32(1));
+        _mm512_mask_i64scatter_epi8_custom(NULL, if_mask, freebuf_vec_1, _mm256_set1_epi32(1));
       } else {
-        _mm512_mask_i64scatter_epi8_custom(if_mask, freebuf_vec_0, _mm256_set1_epi32(1));
+        _mm512_mask_i64scatter_epi8_custom(NULL, if_mask, freebuf_vec_0, _mm256_set1_epi32(1));
       }
       cmp = _kandn_mask8(cmp, _mm256_cmplt_epi32_mask(ret_vec, _mm256_set1_epi32(0)));
       if_mask = _kand_mask8(cmp, masks[i]);
