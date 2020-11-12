@@ -459,23 +459,28 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
       uint32_t maski = _cvtmask8_u32(masks[i]);
       if (maski == 0) {
         continue;
-      } else if (_mm_popcnt_u32(maski) == 1) { // if there is only one packet, process it alone using original functions
-        int index = __builtin_ffs(maski);
-        index--;
-        if (i >= 8) {
-          index += 8;
-        }
-        
-        if (fss[index] != NULL) {
-          ret = fast_flows_packet(ctx, bhs[index], fss[index], &tcpopts[index], ts);
-        } else {
-          ret = -1;
-        }
+      } else if (_mm_popcnt_u32(maski) < 4) { // ok then
+        int amnt = _mm_popcnt_u32(maski);
+        uint32_t all_indices[8] = {0, 1, 2, 3, 4, 5, 6, 7};
+        uint32_t indices[8] = {0};
+        __m256i vind = _mm256_loadu_epi32(all_indices);
+        _mm256_mask_compressstoreu_epi32(indices, masks[i], vind);
+        for (unsigned j = 0; j < amnt; j++) {
+          uint32_t index = indices[j];
+          if (i >= 8) {
+            index += 8;
+          }
+          if (fss[index] != NULL) {
+            ret = fast_flows_packet(ctx, bhs[index], fss[index], &tcpopts[index], ts);
+          } else {
+            ret = -1;
+          }
 
-        if (ret > 0) {
-          freebuf[index] = 1;
-        } else if (ret < 0) {
-          fast_kernel_packet(ctx, bhs[index]);
+          if (ret > 0) {
+            freebuf[index] = 1;
+          } else if (ret < 0) {
+            fast_kernel_packet(ctx, bhs[index]);
+          }
         }
         continue;
       }
