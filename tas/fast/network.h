@@ -162,6 +162,7 @@ static inline void network_free(unsigned num, struct network_buf_handle **bufs)
 }
 
 /** calculate ip pseudo header xsum */
+#pragma vectorize
 static inline uint16_t network_ip_phdr_xsum(beui32_t ip_src, beui32_t ip_dst,
     uint8_t proto, uint16_t l3_paylen)
 {
@@ -180,6 +181,7 @@ static inline uint16_t network_ip_phdr_xsum(beui32_t ip_src, beui32_t ip_dst,
   return (uint16_t) sum;
 }
 
+#pragma vectorize
 static inline uint16_t network_buf_tcpxsums(struct network_buf_handle *bh, uint8_t l2l,
     uint8_t l3l, void *ip_hdr, beui32_t ip_s, beui32_t ip_d, uint8_t ip_proto,
     uint16_t l3_paylen)

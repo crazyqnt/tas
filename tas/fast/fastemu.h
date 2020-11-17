@@ -99,6 +99,7 @@ static inline void tx_send(struct dataplane_context *ctx,
   ctx->tx_num = i + 1;
 }
 
+#pragma vectorize
 static inline uint16_t tx_xsum_enable(struct network_buf_handle *nbh,
     struct ip_hdr *iph, beui32_t ip_s, beui32_t ip_d, uint16_t l3_paylen)
 {
