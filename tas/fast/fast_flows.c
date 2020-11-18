@@ -60,11 +60,11 @@ struct flow_key {
 #pragma vectorize
 static void flow_tx_read(struct flextcp_pl_flowst *fs, uint32_t pos,
     uint16_t len, void *dst);
-#pragma vectorize
+#pragma vectorize transposed(fs)
 static void flow_rx_write(struct flextcp_pl_flowst *fs, uint32_t pos,
     uint16_t len, const void *src);
 #ifdef FLEXNIC_PL_OOO_RECV
-#pragma vectorize
+#pragma vectorize transposed(fs)
 static void flow_rx_seq_write(struct flextcp_pl_flowst *fs, uint32_t seq,
     uint16_t len, const void *src);
 #endif
@@ -77,7 +77,7 @@ static void flow_tx_segment(struct dataplane_context *ctx,
 static void flow_tx_ack(struct dataplane_context *ctx, uint32_t seq,
     uint32_t ack, uint32_t rxwnd, uint32_t echo_ts, uint32_t my_ts,
     struct network_buf_handle *nbh, struct tcp_timestamp_opt *ts_opt);
-#pragma vectorize
+#pragma vectorize transposed(fs)
 static void flow_reset_retransmit(struct flextcp_pl_flowst *fs);
 
 #pragma vectorize
@@ -319,14 +319,15 @@ int fast_flows_packet(struct dataplane_context *ctx,
     uint32_t ts)
 {
   struct pkt_tcp *p = network_buf_bufoff(nbh);
-  struct flextcp_pl_flowst *fs = fsp;
+  struct flextcp_pl_flowst *old_fs = fsp;
+  uint16_t flow_id = old_fs - fp_state->flowst;
+  struct flextcp_pl_flowst *fs = __transpose(old_fs);
   uint32_t payload_bytes, payload_off, seq, ack, old_avail, new_avail,
            orig_payload;
   uint8_t *payload;
   uint32_t rx_bump = 0, tx_bump = 0, rx_pos, rtt;
   int no_permanent_sp = 0;
   uint16_t tcp_extra_hlen, trim_start, trim_end;
-  uint16_t flow_id = fs - fp_state->flowst;
   int trigger_ack = 0, fin_bump = 0;
 
   tcp_extra_hlen = (TCPH_HDRLEN(&p->tcp) - 5) * 4;
@@ -958,7 +959,7 @@ static void flow_tx_read(struct flextcp_pl_flowst *fs, uint32_t pos,
 }
 
 /* write `len` bytes to position `pos` in cirucular receive buffer */
-#pragma vectorize to_scalar
+#pragma vectorize transposed(fs)
 static void flow_rx_write(struct flextcp_pl_flowst *fs, uint32_t pos,
     uint16_t len, const void *src)
 {
@@ -968,6 +969,7 @@ static void flow_rx_write(struct flextcp_pl_flowst *fs, uint32_t pos,
   if (LIKELY(pos + len <= fs->rx_len)) {
     dma_write(rx_base + pos, len, src);
   } else {
+    ALIVE_CHECK();
     part = fs->rx_len - pos;
     dma_write(rx_base + pos, part, src);
     dma_write(rx_base, len - part, (const uint8_t *) src + part);
@@ -975,7 +977,7 @@ static void flow_rx_write(struct flextcp_pl_flowst *fs, uint32_t pos,
 }
 
 #ifdef FLEXNIC_PL_OOO_RECV
-#pragma vectorize alive_check
+#pragma vectorize alive_check transposed(fs)
 static void flow_rx_seq_write(struct flextcp_pl_flowst *fs, uint32_t seq,
     uint16_t len, const void *src)
 {
@@ -1145,7 +1147,7 @@ static void flow_tx_ack(struct dataplane_context *ctx, uint32_t seq,
   tx_send(ctx, nbh, network_buf_off(nbh), hdrlen);
 }
 
-#pragma vectorize alive_check
+#pragma vectorize alive_check transposed(fs)
 static void flow_reset_retransmit(struct flextcp_pl_flowst *fs)
 {
   uint32_t x;

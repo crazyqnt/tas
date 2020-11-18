@@ -120,7 +120,7 @@ static inline int tcp_valid_rxseq(struct flextcp_pl_flowst *fs,
  *
  * @return 0 if packet should be processed, != 0 to drop.
  */
-#pragma vectorize
+#pragma vectorize transposed(fs)
 static inline int tcp_trim_rxbuf(struct flextcp_pl_flowst *fs,
     uint32_t pkt_seq, uint16_t pkt_bytes, uint16_t *trim_start,
     uint16_t *trim_end)
@@ -232,7 +232,7 @@ static inline int tcp_trim_rxbuf_new(uint32_t fs_rx_next_seq, uint32_t fs_rx_ava
  *
  * @return 0 if ack is valid, != 0 otherwise
  */
-#pragma vectorize
+#pragma vectorize transposed(fs)
 static inline int tcp_valid_rxack(struct flextcp_pl_flowst *fs, uint32_t ack,
     uint32_t *bump)
 {
@@ -293,7 +293,7 @@ static inline int tcp_valid_rxack_new(uint32_t fs_tx_next_seq, uint32_t fs_tx_se
  *
  * @return Bytes that can be sent.
  */
-#pragma vectorize
+#pragma vectorize transposed(fs)
 static inline uint32_t tcp_txavail(const struct flextcp_pl_flowst *fs,
     const uint32_t *pavail)
 {
