@@ -322,6 +322,11 @@ int fast_flows_packet(struct dataplane_context *ctx,
   struct flextcp_pl_flowst *old_fs = fsp;
   uint16_t flow_id = old_fs - fp_state->flowst;
   struct flextcp_pl_flowst *fs = __transpose(old_fs);
+#ifdef ASTVEC_CURRENTLY_VECTORIZING
+  __transpose_ignore(fs, &fs->local_ip, &fs->local_port, &fs->remote_ip, &fs->remote_port, &fs->remote_mac, &fs->flow_group, &fs->bump_seq, &fs->lock);
+  __transpose_readonly(fs, &fs->tx_len, &fs->db_id, &fs->opaque, &fs->tx_rate);
+#endif
+
   uint32_t payload_bytes, payload_off, seq, ack, old_avail, new_avail,
            orig_payload;
   uint8_t *payload;
