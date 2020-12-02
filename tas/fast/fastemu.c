@@ -653,7 +653,6 @@ static unsigned poll_qman(struct dataplane_context *ctx, uint32_t ts)
   struct network_buf_handle **handles;
   uint16_t off = 0, max;
   int ret, i;
-  //int use;
 
   max = BATCH_SIZE;
   if (TXBUF_SIZE - ctx->tx_num < max)
@@ -692,17 +691,28 @@ static unsigned poll_qman(struct dataplane_context *ctx, uint32_t ts)
 
   for (unsigned i = 0; i * 8 < ret; ++i) {
     unsigned start = i * 8;
-    __mmask8 mask = _cvtu32_mask8((1 << MIN(8, ret - start)) - 1);
-    __m256i vq_ids = _mm256_loadu_epi32(&q_ids[start]);
+    unsigned amount = MIN(8, ret - start);
 
-    __m512i vctx = _mm512_set1_epi64((uintptr_t) ctx);
-    __m512i vhandles = _mm512_loadu_epi64(&handles[start]);
-    __m256i vts = _mm256_set1_epi32(ts);
+    if (amount > 2) {
+      __mmask8 mask = _cvtu32_mask8((1 << amount) - 1);
+      __m256i vq_ids = _mm256_loadu_epi32(&q_ids[start]);
 
-    __m256i vret = fast_flows_qman_vec(vctx, vq_ids, vhandles, vts, mask);
-    __mmask8 vuse = _mm256_mask_cmpeq_epi32_mask(mask, vret, _mm256_setzero_si256());
-    //printf("Ye %d ", _mm_popcnt_u32(_cvtmask8_u32(vuse)));
-    off += _mm_popcnt_u32(_cvtmask8_u32(vuse));
+      __m512i vctx = _mm512_set1_epi64((uintptr_t) ctx);
+      __m512i vhandles = _mm512_loadu_epi64(&handles[start]);
+      __m256i vts = _mm256_set1_epi32(ts);
+
+      __m256i vret = fast_flows_qman_vec(vctx, vq_ids, vhandles, vts, mask);
+      __mmask8 vuse = _mm256_mask_cmpeq_epi32_mask(mask, vret, _mm256_setzero_si256());
+      off += _mm_popcnt_u32(_cvtmask8_u32(vuse));
+    } else {
+      int use;
+      for (unsigned j = start; j < start + amount; j++) {
+        use = fast_flows_qman(ctx, q_ids[j], handles[off], ts);
+
+        if (use == 0)
+          off++;
+      }
+    }
   }
 
   /*
