@@ -901,7 +901,7 @@ int fast_flows_bump(struct dataplane_context *ctx, uint32_t flow_id,
   /* receive buffer freed up from empty, need to send out a window update, if
    * we're not sending anyways. */
   if (new_avail == 0 && rx_avail_prev == 0 && fs->rx_avail != 0) {
-    flow_tx_segment(ctx, nbh, fs, fs->tx_next_seq, fs->rx_next_seq,
+    flow_tx_segment_modified(ctx, nbh, fs, fs->tx_next_seq, fs->rx_next_seq,
         fs->rx_avail, 0, 0, fs->tx_next_ts, ts, 0);
     ret = 0;
   }

@@ -249,8 +249,8 @@ static void inline set_impl(struct qman_thread *t, uint32_t idx, uint32_t rate,
 /*****************************************************************************/
 /* Managing no-limit queues */
 
-/** Add queue to the no limit list */
-#pragma vectorize
+/** Add queue to the no limit list */ // HAS SIDE EFFECTS ON t
+#pragma vectorize to_scalar
 static inline void queue_activate_nolimit(struct qman_thread *t,
     struct queue *q, uint32_t idx)
 {
@@ -309,8 +309,8 @@ static inline uint32_t queue_new_ts(struct qman_thread *t, struct queue *q,
   return t->ts_virtual + ((uint64_t) bytes * 8 * 1000000) / q->rate;
 }
 
-/** Add queue to the skip list list */
-#pragma vectorize
+/** Add queue to the skip list list */ // HAS SIDE EFFECTS ON t
+#pragma vectorize to_scalar
 static inline void queue_activate_skiplist(struct qman_thread *t,
     struct queue *q, uint32_t q_idx)
 {

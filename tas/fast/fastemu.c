@@ -595,10 +595,27 @@ static unsigned poll_queues(struct dataplane_context *ctx, uint32_t ts)
       FLEXNIC_PL_APPCTX_NUM;
   }
 
-  for (j = 0; j < k; j++) {
-    ret = fast_appctx_poll_bump(ctx, aqes[j], handles[num_bufs], ts);
-    if (ret == 0)
-      num_bufs++;
+  for (unsigned i = 0; i * 8 < k; ++i) {
+    unsigned start = i * 8;
+    unsigned amount = MIN(8, k - start);
+
+    if (amount > 2) {
+      __mmask8 mask = _cvtu32_mask8((1 << amount) - 1);
+
+      __m512i vctx = _mm512_set1_epi64((uintptr_t) ctx);
+      __m512i vaqes = _mm512_loadu_epi64(&aqes[start]);
+      __m512i vhandles = _mm512_loadu_epi64(&handles[start]);
+      __m256i vts = _mm256_set1_epi32(ts);
+      __m256i vret = fast_appctx_poll_bump_vec(vctx, vaqes, vhandles, vts, mask);
+      __mmask8 vuse = _mm256_mask_cmpeq_epi32_mask(mask, vret, _mm256_setzero_si256());
+      num_bufs += _mm_popcnt_u32(_cvtmask8_u32(vuse));
+    } else {
+      for (j = start; j < start + amount; j++) {
+        ret = fast_appctx_poll_bump(ctx, aqes[j], handles[num_bufs], ts);
+        if (ret == 0)
+          num_bufs++;
+      }
+    }
   }
 
   /* apply buffer reservations */

@@ -81,6 +81,7 @@ int fast_appctx_poll_fetch(struct dataplane_context *ctx, uint32_t id,
   return 0;
 }
 
+#pragma vectorize
 int fast_appctx_poll_bump(struct dataplane_context *ctx, void *pqe,
     struct network_buf_handle *nbh, uint32_t ts)
 {
@@ -94,7 +95,7 @@ int fast_appctx_poll_bump(struct dataplane_context *ctx, void *pqe,
   if (ret != 0)
     ret = 1;
 
-  MEM_BARRIER();
+  //MEM_BARRIER();
   atx->type = 0;
 
   return ret;
