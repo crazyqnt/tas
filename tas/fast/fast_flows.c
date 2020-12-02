@@ -56,6 +56,12 @@ struct flow_key {
 #define fs_unlock(fs) do {} while (0)
 #endif
 
+#ifdef ASTVEC_CURRENTLY_VECTORIZING
+static void flow_tx_segment_vec(
+    __m512i vctx, __m512i vnbh, __m512i vfs, __m256i vseq, __m256i vack, __m256i vrxwnd, __m256i vpayload,
+    __m256i vpayload_pos, __m256i vts_echo, __m256i vts_my, __m256i vfin, __mmask8 k
+) {}
+#endif
 
 #pragma vectorize
 static void flow_tx_read(struct flextcp_pl_flowst *fs, uint32_t pos,
@@ -68,11 +74,14 @@ static void flow_rx_write(struct flextcp_pl_flowst *fs, uint32_t pos,
 static void flow_rx_seq_write(struct flextcp_pl_flowst *fs, uint32_t seq,
     uint16_t len, const void *src);
 #endif
-#pragma vectorize
 static void flow_tx_segment(struct dataplane_context *ctx,
     struct network_buf_handle *nbh, struct flextcp_pl_flowst *fs,
     uint32_t seq, uint32_t ack, uint32_t rxwnd, uint16_t payload,
     uint32_t payload_pos, uint32_t ts_echo, uint32_t ts_my, uint8_t fin);
+static void flow_tx_segment_vec(
+    __m512i vctx, __m512i vnbh, __m512i vfs, __m256i vseq, __m256i vack, __m256i vrxwnd, __m256i vpayload,
+    __m256i vpayload_pos, __m256i vts_echo, __m256i vts_my, __m256i vfin, __mmask8 k
+);
 #pragma vectorize
 static void flow_tx_ack(struct dataplane_context *ctx, uint32_t seq,
     uint32_t ack, uint32_t rxwnd, uint32_t echo_ts, uint32_t my_ts,
@@ -118,6 +127,26 @@ static int rte_ring_enqueue_wrapper(struct rte_ring *r, void *obj) {
 #pragma vectorize to_scalar
 void notify_fastpath_core_wrapper(unsigned core) {
   notify_fastpath_core(core);
+}
+
+static void flow_tx_segment_modified(struct dataplane_context *ctx,
+    struct network_buf_handle *nbh, struct flextcp_pl_flowst *fs,
+    uint32_t seq, uint32_t ack, uint32_t rxwnd, uint16_t payload,
+    uint32_t payload_pos, uint32_t ts_echo, uint32_t ts_my, uint8_t fin) {
+  flow_tx_segment(ctx, nbh, fs, seq, ack, rxwnd, payload, payload_pos, ts_echo, ts_my, fin);
+}
+
+static void flow_tx_segment_modified_vec(
+  __m512i vctx, __m512i vnbh, __m512i vfs, __m256i vseq, __m256i vack, __m256i vrxwnd, __m256i vpayload,
+  __m256i vpayload_pos, __m256i vts_echo, __m256i vts_my, __m256i vfin, __mmask8 k
+) {
+  // Just need to re-order the network buf handles
+  // from [0, 1, 2, ...] to where 0 is at first set position in k, 1 is at second set position in k etc.
+  vnbh = _mm512_maskz_expand_epi64(k, vnbh); // <- this should to just that!
+
+  flow_tx_segment_vec(vctx, vnbh,
+    vfs, vseq, vack, vrxwnd, vpayload, vpayload_pos, vts_echo, vts_my, vfin, k
+  );
 }
 
 #pragma vectorize alive_check
@@ -217,7 +246,7 @@ int fast_flows_qman(struct dataplane_context *ctx, uint32_t queue,
   }
 
   /* send out segment */
-  flow_tx_segment(ctx, nbh, fs, tx_seq, ack, rx_wnd, len, tx_pos,
+  flow_tx_segment_modified(ctx, nbh, fs, tx_seq, ack, rx_wnd, len, tx_pos,
       fs->tx_next_ts, ts, fin);
 unlock:
   fs_unlock(fs);
