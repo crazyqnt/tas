@@ -604,7 +604,7 @@ static unsigned poll_queues(struct dataplane_context *ctx, uint32_t ts)
 
       __m512i vctx = _mm512_set1_epi64((uintptr_t) ctx);
       __m512i vaqes = _mm512_loadu_epi64(&aqes[start]);
-      __m512i vhandles = _mm512_loadu_epi64(&handles[start]);
+      __m512i vhandles = _mm512_loadu_epi64(&handles[num_bufs]);
       __m256i vts = _mm256_set1_epi32(ts);
       __m256i vret = fast_appctx_poll_bump_vec(vctx, vaqes, vhandles, vts, mask);
       __mmask8 vuse = _mm256_mask_cmpeq_epi32_mask(mask, vret, _mm256_setzero_si256());
@@ -715,7 +715,7 @@ static unsigned poll_qman(struct dataplane_context *ctx, uint32_t ts)
       __m256i vq_ids = _mm256_loadu_epi32(&q_ids[start]);
 
       __m512i vctx = _mm512_set1_epi64((uintptr_t) ctx);
-      __m512i vhandles = _mm512_loadu_epi64(&handles[start]);
+      __m512i vhandles = _mm512_loadu_epi64(&handles[off]);
       __m256i vts = _mm256_set1_epi32(ts);
 
       __m256i vret = fast_flows_qman_vec(vctx, vq_ids, vhandles, vts, mask);
