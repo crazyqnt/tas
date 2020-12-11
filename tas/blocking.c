@@ -63,6 +63,7 @@ void notify_app_core(int appfd, uint64_t *last_ts)
   notify_core(appfd, last_ts, util_rdtsc(), tas_info->poll_cycle_app);
 }
 
+#pragma GCC diagnostic ignored "-Waddress-of-packed-member"
 void notify_appctx(struct flextcp_pl_appctx *ctx, uint64_t tsc)
 {
   notify_core(ctx->evfd, &ctx->last_ts, tsc, tas_info->poll_cycle_app);

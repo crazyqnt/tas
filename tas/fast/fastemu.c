@@ -294,19 +294,54 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
   /* parse packets */
   fast_flows_packet_parse(ctx, bhs, fss, tcpopts, n);
 
+  int handled[n];
+  int n_handled = 0;
   for (i = 0; i < n; i++) {
-    /* run fast-path for flows with flow state */
-    if (fss[i] != NULL) {
-      ret = fast_flows_packet(ctx, bhs[i], fss[i], &tcpopts[i], ts);
-    } else {
-      ret = -1;
+    handled[i] = 0;
+  }
+  while (n_handled < n) {
+    void* batch_fss[BATCH_SIZE];
+    struct tcp_opts *batch_tcpopts[BATCH_SIZE];
+    struct network_buf_handle *batch_bhs[BATCH_SIZE];
+    int batch_indices[BATCH_SIZE];
+    int next_n = 0;
+    for (i = 0; i < n; i++) {
+      if (handled[i] == 0) {
+        if (fss[i] == NULL) {
+          handled[i] = 1;
+          fast_kernel_packet(ctx, bhs[i]);
+          n_handled++;
+          continue;
+        }
+        int collision = 0;
+        for (unsigned j = 0; j < next_n; j++) {
+          if (batch_fss[j] == fss[i]) {
+            collision = 1;
+            break;
+          }
+        }
+        if (collision == 1) {
+          continue;
+        }
+        batch_fss[next_n] = fss[i];
+        batch_tcpopts[next_n] = &tcpopts[i];
+        batch_bhs[next_n] = bhs[i];
+        batch_indices[next_n] = i;
+        next_n++;
+        handled[i] = 1;
+      }
+    }
+    int trigger_ack[next_n];
+    fast_flows_packet(ctx, &batch_bhs[0], &batch_fss[0], &batch_tcpopts[0], ts, &trigger_ack[0], next_n);
+    for (i = 0; i < next_n; i++) {
+      if (trigger_ack[i] > 0) {
+        freebuf[batch_indices[i]] = 1;
+      } else if (ret < 0) {
+        fast_kernel_packet(ctx, batch_bhs[i]);
+      }
     }
 
-    if (ret > 0) {
-      freebuf[i] = 1;
-    } else if (ret < 0) {
-      fast_kernel_packet(ctx, bhs[i]);
-    }
+    n_handled += next_n;
   }
 
   arx_cache_flush(ctx, tsc);
