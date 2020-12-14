@@ -27,6 +27,7 @@
 
 #include <tas_memif.h>
 #include <utils.h>
+#include <intrinhelper.h>
 
 #define ALLOW_FUTURE_ACKS 1
 
@@ -105,6 +106,18 @@ static inline int tcp_valid_rxseq(struct flextcp_pl_flowst *fs,
   return 0;
 }
 
+static __m256i tcp_trim_rxbuf_vec(__m512i fs,
+    __m256i pkt_seq, __m256i pkt_bytes, __m512i trim_start,
+    __m512i trim_end, __mmask8 k);
+
+#ifdef ASTVEC_CURRENTLY_VECTORIZING
+static __m256i tcp_trim_rxbuf_vec(__m512i fs,
+    __m256i pkt_seq, __m256i pkt_bytes, __m512i trim_start,
+    __m512i trim_end, __mmask8 k) {
+  return _mm256_setzero_si256();
+}
+#endif
+
 /**
  * Check if part of this packet fits into the un-used portion of the receive
  * buffer, even if out of order.
@@ -119,9 +132,10 @@ static inline int tcp_valid_rxseq(struct flextcp_pl_flowst *fs,
  *
  * @return 0 if packet should be processed, != 0 to drop.
  */
+#pragma vectorize
 static inline int tcp_trim_rxbuf(struct flextcp_pl_flowst *fs,
-    uint32_t pkt_seq, uint16_t pkt_bytes, uint16_t *trim_start,
-    uint16_t *trim_end)
+    uint32_t pkt_seq, uint16_t pkt_bytes, uint32_t *trim_start,
+    uint32_t *trim_end)
 {
   uint32_t pseq_a = pkt_seq, pseq_b = pkt_seq + pkt_bytes;
   uint32_t sseq_a = fs->rx_next_seq, sseq_b = fs->rx_next_seq + fs->rx_avail;

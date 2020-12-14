@@ -274,6 +274,10 @@ void fast_flows_packet_pfbufs(struct dataplane_context *ctx,
   }
 }
 
+static long long address_offsets_32bit[8] = {
+  0, 4, 8, 12, 16, 20, 24, 28
+};
+
 /* Received packet */
 void fast_flows_packet(struct dataplane_context *ctx,
     struct network_buf_handle **nbh, void **fsp, struct tcp_opts **opts,
@@ -287,7 +291,8 @@ void fast_flows_packet(struct dataplane_context *ctx,
   uint8_t *payload[n];
   uint32_t rx_bump[n], tx_bump[n], rx_pos[n], rtt[n];
   int no_permanent_sp[n];
-  uint16_t tcp_extra_hlen[n], trim_start[n], trim_end[n];
+  uint16_t tcp_extra_hlen[n];
+  uint32_t trim_start[n], trim_end[n];
   uint16_t flow_id[n];
   int fin_bump[n];
 
@@ -442,15 +447,52 @@ void fast_flows_packet(struct dataplane_context *ctx,
   }
 
 #ifdef FLEXNIC_PL_OOO_RECV
+  for (unsigned i = 0; i < n; i += 8) {
+    if (n - i > 2) {
+      unsigned amount = MIN(8, n - i);
+      __mmask8 mask = _cvtu32_mask8((1 << amount) - 1);
+      mask = _kand_mask8(mask, _mm256_cmpeq_epu32_mask(_mm256_loadu_epi32(&goto_unlock[0]), _mm256_setzero_si256()));
+      mask = _kand_mask8(mask, _mm256_cmpeq_epu32_mask(_mm256_loadu_epi32(&goto_slowpath[0]), _mm256_setzero_si256()));
+      __m512i vfs = _mm512_loadu_epi64(&fs[i]);
+      __m256i vseq = _mm256_loadu_epi32(&seq[i]);
+      __m256i vpayload_bytes = _mm256_loadu_epi32(&payload_bytes[i]);
+      __m512i offsets = _mm512_loadu_epi64(&address_offsets_32bit[0]);
+      __m512i vtrim_start = _mm512_add_epi64(_mm512_set1_epi64((uintptr_t)&trim_start[i]), offsets);
+      __m512i vtrim_end = _mm512_add_epi64(_mm512_set1_epi64((uintptr_t)&trim_end[i]), offsets);
+
+      __m256i res = tcp_trim_rxbuf_vec(vfs, vseq, vpayload_bytes, vtrim_start, vtrim_end, mask);
+      __mmask8 notzero = _mm256_cmpneq_epu32_mask(res, _mm256_setzero_si256());
+      notzero = _kand_mask8(notzero, mask);
+
+      __m256i one = _mm256_set1_epi32(1);
+      _mm256_mask_storeu_epi32(&trigger_ack[0], notzero, one);
+      _mm256_mask_storeu_epi32(&goto_unlock[0], notzero, one);
+    } else {
+      for (unsigned j = i; j < n; j++) {
+        if (!goto_unlock[j] && !goto_slowpath[j]) {
+
+          if (UNLIKELY(tcp_trim_rxbuf(fs[j], seq[j], payload_bytes[j], &trim_start[j], &trim_end[j]) != 0)) {
+            /* packet is completely outside of unused receive buffer */
+            trigger_ack[j] = 1;
+            goto_unlock[j] = 1;
+            continue;
+          }
+        }
+      }
+      break;
+    }
+  }
+
   for (unsigned i = 0; i < n; i++) {
     if (!goto_unlock[i] && !goto_slowpath[i]) {
-
+      /*
       if (UNLIKELY(tcp_trim_rxbuf(fs[i], seq[i], payload_bytes[i], &trim_start[i], &trim_end[i]) != 0)) {
-        /* packet is completely outside of unused receive buffer */
+        // packet is completely outside of unused receive buffer
         trigger_ack[i] = 1;
         goto_unlock[i] = 1;
         continue;
       }
+      */
 
       /* trim payload to what we can actually use */
       payload_bytes[i] -= trim_start[i] + trim_end[i];
