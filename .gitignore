@@ -21,6 +21,7 @@ tests/tas_unit/fastpath
 tests/full/tas_linux
 tests/full/wrapper
 tests/distfiles
+isolated/fastpath
 tracetool
 statetool
 scaletool

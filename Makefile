@@ -81,6 +81,8 @@ include $(dir)/rules.mk
 dir := doc
 include $(dir)/rules.mk
 
+dir := isolated
+include $(dir)/rules.mk
 
 ##############################################################################
 # Top level targets
