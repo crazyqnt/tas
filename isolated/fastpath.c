@@ -175,7 +175,7 @@ unsigned long long run_measurement(int vectorized) {
 
         __mmask8 mask = _cvtu32_mask8(0xFF);
 
-        fast_flows_packet_parse_vec(ctx_vec, bhs_vec, fss_vec, tcpopts_vec, mask);
+        fast_flows_packet_parse_handvec(ctx_vec, bhs_vec, fss_vec, tcpopts_vec, mask);
 
         __m512i fss_loaded = _mm512_loadu_epi64(&fss[0]);
         __mmask8 cmp = _mm512_cmpneq_epi64_mask(fss_loaded, _mm512_set1_epi64(0));
@@ -233,17 +233,18 @@ int main(int argc, char *argv[]) {
     }
 
     printf("Go!\n");
+    unsigned measurements = 1024;
     unsigned long long vectorized = 0, scalar = 0;
-    for (unsigned i = 0; i < 64; i++) {
+    for (unsigned i = 0; i < measurements; i++) {
       vectorized += run_measurement(1);
     }
-    for (unsigned i = 0; i < 64; i++) {
+    for (unsigned i = 0; i < measurements; i++) {
       scalar += run_measurement(0);
     }
 
     printf("Results:\n");
-    printf("Vectorized: %.1f cycles\n", ((double)vectorized) / 64.0);
-    printf("Scalar    : %.1f cycles\n", ((double)scalar) / 64.0);
+    printf("Vectorized: %.1f cycles\n", ((double)vectorized) / (double)measurements);
+    printf("Scalar    : %.1f cycles\n", ((double)scalar) / (double)measurements);
 
     return 0;
 }

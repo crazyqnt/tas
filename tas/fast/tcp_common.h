@@ -273,8 +273,10 @@ static inline int tcp_parse_options(const struct pkt_tcp *p, uint16_t len,
       /* no-op, ignore */
       opt_len = 1;
     } else {
+      ALIVE_CHECK();
       /* variable length option */
       if (opt_avail < 2) {
+        ALIVE_CHECK();
         //fprintf(stderr, "parse_options: opt_avail=%u kind=%u off=%u\n", opt_avail, opt_kind,  off);
         return -1;
       }
@@ -282,6 +284,7 @@ static inline int tcp_parse_options(const struct pkt_tcp *p, uint16_t len,
       opt_len = opt[off + 1];
       if (opt_kind == TCP_OPT_TIMESTAMP) {
         if (opt_len != sizeof(struct tcp_timestamp_opt)) {
+          ALIVE_CHECK();
           //fprintf(stderr, "parse_options: opt_len=%u so=%zu\n", opt_len, sizeof(struct tcp_timestamp_opt));
           return -1;
         }

@@ -311,6 +311,166 @@ void fast_flows_packet_parse(struct dataplane_context *ctx,
   //}
 }
 
+__m512i inline extract_16_bit(__m512i src) {
+  return _mm512_srli_epi64(_mm512_slli_epi64(src, 48), 48);
+}
+
+__m512i inline extract_16_bit_bswap(__m512i src) {
+  __m512i high = _mm512_srli_epi64(_mm512_slli_epi64(src, 56), 48);
+  __m512i low = _mm512_srli_epi64(_mm512_slli_epi64(_mm512_srli_epi64(src, 8), 56), 56);
+  return _mm512_or_epi64(high, low);
+}
+
+__m512i inline extract_8_bit(__m512i src) {
+  return _mm512_srli_epi64(_mm512_slli_epi64(src, 56), 56);
+}
+
+__m512i inline mask_extract_8_bit(__m512i def, __mmask8 k, __m512i src) {
+  return _mm512_mask_srli_epi64(def, k, _mm512_slli_epi64(src, 56), 56);
+}
+
+void fast_flows_packet_parse_handvec(__m512i ctx, __m512i nbhs, __m512i fss, __m512i tos, __mmask8 k) {
+  k = _kandn_mask8(_mm512_cmpeq_epi64_mask(_mm512_mask_i64gather_epi64(_mm512_undefined(), k, fss, NULL, 1), _mm512_setzero()), k);
+
+  __m512i p = _mm512_add_epi64(_mm512_mask_i64gather_epi64(_mm512_undefined(), k, nbhs, offsetof(struct rte_mbuf, buf_addr), 1),
+    extract_16_bit(_mm512_mask_i64gather_epi64(_mm512_undefined(), k, nbhs, offsetof(struct rte_mbuf, data_off), 1))
+  );
+  __m512i len = extract_16_bit(_mm512_mask_i64gather_epi64(_mm512_undefined(), k, nbhs, offsetof(struct rte_mbuf, data_len), 1));
+  __m512i ip_v_hl = extract_8_bit(_mm512_mask_i64gather_epi64(_mm512_undefined(), k, p, offsetof(struct pkt_tcp, ip._v_hl), 1));
+  __m512i tcp_headerlen = _mm512_srli_epi64(extract_16_bit_bswap(
+    _mm512_mask_i64gather_epi64(_mm512_undefined(), k, p, offsetof(struct pkt_tcp, tcp._hdrlen_rsvd_flags), 1)
+  ), 12);
+
+  __mmask8 big_or = _cvtu32_mask8(0);
+  big_or = _kor_mask8(big_or,
+    _mm512_cmplt_epu64_mask(len, _mm512_set1_epi64(sizeof(struct pkt_tcp)))
+  );
+  big_or = _kor_mask8(
+    big_or,
+    _mm512_cmpneq_epu64_mask(extract_16_bit_bswap(
+      _mm512_mask_i64gather_epi64(_mm512_undefined(), k, p, offsetof(struct pkt_tcp, eth.type), 1)
+    ), _mm512_set1_epi64(ETH_TYPE_IP))
+  );
+  big_or = _kor_mask8(
+    big_or,
+    _mm512_cmpneq_epu64_mask(extract_8_bit(
+      _mm512_mask_i64gather_epi64(_mm512_undefined(), k, p, offsetof(struct pkt_tcp, ip.proto), 1)
+    ), _mm512_set1_epi64(IP_PROTO_TCP))
+  );
+  big_or = _kor_mask8(
+    big_or,
+    _mm512_cmpneq_epu64_mask(ip_v_hl, _mm512_set1_epi64((4 << 4) | 5))
+  );
+  __mmask8 tcp_headerlen_toosmall = _mm512_cmplt_epu64_mask(tcp_headerlen, _mm512_set1_epi64(5));
+  big_or = _kor_mask8(
+    big_or,
+    tcp_headerlen_toosmall
+  );
+  big_or = _kor_mask8(
+    big_or,
+    _mm512_cmplt_epu64_mask(
+      len,
+      _mm512_add_epi64(
+        extract_16_bit_bswap(_mm512_mask_i64gather_epi64(_mm512_undefined(), k, p, offsetof(struct pkt_tcp, ip.len), 1)),
+        _mm512_set1_epi64(sizeof(struct eth_hdr))
+      )
+    )
+  );
+
+  // TCP parse options
+  __m512i opts = _mm512_add_epi64(p, _mm512_set1_epi64(sizeof(struct pkt_tcp)));
+  __m512i opts_len = _mm512_sub_epi64(_mm512_slli_epi64(tcp_headerlen, 2), _mm512_set1_epi64(20));
+  __m512i off = _mm512_setzero_si512();
+  _mm512_mask_i64scatter_epi64(offsetof(struct tcp_opts, ts), k, tos, _mm512_setzero_si512(), 1);
+
+  __mmask8 topt_initial_fail = _kor_mask8(
+    tcp_headerlen_toosmall,
+    _mm512_cmpgt_epi64_mask(
+      opts_len,
+      _mm512_sub_epi64(len, _mm512_set1_epi64(sizeof(struct pkt_tcp)))
+    )
+  );
+  __mmask8 topt_mask = _kandn_mask8(
+    topt_initial_fail, k
+  );
+  big_or = _kor_mask8(big_or, topt_initial_fail);
+  { // TCP parse options main body
+    __mmask8 ts_was_set = _cvtu32_mask8(0);
+    while (true) {
+      topt_mask = _kand_mask8(
+        topt_mask,
+        _mm512_cmplt_epu64_mask(off, opts_len)
+      );
+
+      if (_cvtmask8_u32(topt_mask) == 0) {
+        break;
+      }
+
+      __mmask8 iteration_mask = topt_mask;
+
+      __m512i opt_kind = extract_8_bit(
+        _mm512_mask_i64gather_epi64(_mm512_undefined(), iteration_mask, _mm512_add_epi64(opts, off), NULL, 1)
+      );
+      __m512i opt_avail = _mm512_sub_epi64(opts_len, off);
+      __m512i opt_len = _mm512_undefined_epi32();
+
+      __mmask8 end_of_opts = _mm512_cmpeq_epi64_mask(opt_kind, _mm512_set1_epi64(TCP_OPT_END_OF_OPTIONS));
+      topt_mask = _kandn_mask8(end_of_opts, topt_mask);
+      iteration_mask = _kandn_mask8(end_of_opts, iteration_mask); // break of opt_kind == TCP_OPT_END_OF_OPTIONS
+
+      __mmask8 cur_if_mask = _kand_mask8(
+        iteration_mask,
+        _mm512_cmpeq_epi64_mask(opt_kind, _mm512_set1_epi64(TCP_OPT_NO_OP))
+      );
+      opt_len = _mm512_mask_set1_epi64(opt_len, cur_if_mask, 1);
+      cur_if_mask = _kandn_mask8(
+        cur_if_mask,
+        iteration_mask
+      ); // should be the else mask?
+
+      if (_cvtmask8_u32(cur_if_mask) != 0) {
+        __mmask8 too_short = _mm512_cmplt_epu64_mask(opt_avail, _mm512_set1_epi64(2));
+        big_or = _kor_mask8(big_or, too_short);
+        cur_if_mask = _kandn_mask8(too_short, cur_if_mask);
+        iteration_mask = _kandn_mask8(too_short, iteration_mask);
+        topt_mask = _kandn_mask8(too_short, topt_mask);
+
+        opt_len = mask_extract_8_bit(
+          opt_len,
+          cur_if_mask,
+          _mm512_mask_i64gather_epi64(_mm512_undefined(), iteration_mask, _mm512_add_epi64(opts, off), (void*) 1, 1)
+        ); // opt_len = opt[off + 1];
+
+        cur_if_mask = _kand_mask8(
+          cur_if_mask,
+          _mm512_cmpeq_epi64_mask(opt_kind, _mm512_set1_epi64(TCP_OPT_TIMESTAMP))
+        );
+
+        __mmask8 len_invalid = _mm512_cmpneq_epi64_mask(opt_len, _mm512_set1_epi64(sizeof(struct tcp_timestamp_opt)));
+        if (_cvtmask8_u32(len_invalid) != 0) {
+          big_or = _kor_mask8(big_or, len_invalid);
+          cur_if_mask = _kandn_mask8(len_invalid, cur_if_mask);
+          iteration_mask = _kandn_mask8(len_invalid, iteration_mask);
+          topt_mask = _kandn_mask8(len_invalid, topt_mask);
+        }
+
+        _mm512_mask_i64scatter_epi64(offsetof(struct tcp_opts, ts), cur_if_mask, tos, _mm512_add_epi64(opts, off), 1);
+        ts_was_set = _kor_mask8(ts_was_set, cur_if_mask);
+      }
+
+      off = _mm512_mask_add_epi64(off, iteration_mask, off, opt_len);
+    }
+
+    // All for which ts was not set
+    big_or = _kor_mask8(
+      big_or,
+      _knot_mask8(ts_was_set)
+    );
+  }
+
+  _mm512_mask_i64scatter_epi64(NULL, big_or, fss, _mm512_setzero_si512(), 1); // set to zero where big_or is true
+}
+
 #pragma vectorize
 void fast_flows_packet_pfbufs(struct dataplane_context *ctx,
     void *fss, uint16_t n)
@@ -351,6 +511,7 @@ int fast_flows_packet(struct dataplane_context *ctx,
   struct flextcp_pl_flowst *old_fs = fsp;
   uint16_t flow_id = old_fs - fp_state->flowst;
   struct flextcp_pl_flowst *fs = __transpose(old_fs);
+  //struct flextcp_pl_flowst *fs = old_fs;
 #ifdef ASTVEC_CURRENTLY_VECTORIZING
   __transpose_ignore(fs, &fs->local_ip, &fs->local_port, &fs->remote_ip, &fs->remote_port, &fs->remote_mac, &fs->flow_group, &fs->bump_seq, &fs->lock);
   __transpose_readonly(fs, &fs->tx_len, &fs->db_id, &fs->opaque, &fs->tx_rate);
