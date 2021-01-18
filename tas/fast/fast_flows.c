@@ -329,6 +329,17 @@ __m512i inline mask_extract_8_bit(__m512i def, __mmask8 k, __m512i src) {
   return _mm512_mask_srli_epi64(def, k, _mm512_slli_epi64(src, 56), 56);
 }
 
+__m512i inline extract_24_bit(__m512i src) {
+  return _mm512_srli_epi64(_mm512_slli_epi64(src, 40), 40);
+}
+
+// extract the two bytes starting at the 32th bit and swap them
+__m512i inline extract_16_at_32_bit_bswap(__m512i src) {
+  __m512i high = _mm512_slli_epi64(_mm512_srli_epi64(_mm512_slli_epi64(src, 24), 56), 8);
+  __m512i low = _mm512_srli_epi64(_mm512_slli_epi64(src, 16), 56);
+  return _mm512_or_epi64(high, low);
+}
+
 void fast_flows_packet_parse_handvec(__m512i ctx, __m512i nbhs, __m512i fss, __m512i tos, __mmask8 k) {
   k = _kandn_mask8(_mm512_cmpeq_epi64_mask(_mm512_mask_i64gather_epi64(_mm512_undefined(), k, fss, NULL, 1), _mm512_setzero()), k);
 
@@ -336,7 +347,7 @@ void fast_flows_packet_parse_handvec(__m512i ctx, __m512i nbhs, __m512i fss, __m
     extract_16_bit(_mm512_mask_i64gather_epi64(_mm512_undefined(), k, nbhs, offsetof(struct rte_mbuf, data_off), 1))
   );
   __m512i len = extract_16_bit(_mm512_mask_i64gather_epi64(_mm512_undefined(), k, nbhs, offsetof(struct rte_mbuf, data_len), 1));
-  __m512i ip_v_hl = extract_8_bit(_mm512_mask_i64gather_epi64(_mm512_undefined(), k, p, offsetof(struct pkt_tcp, ip._v_hl), 1));
+  //__m512i ip_v_hl = extract_8_bit(_mm512_mask_i64gather_epi64(_mm512_undefined(), k, p, offsetof(struct pkt_tcp, ip._v_hl), 1));
   __m512i tcp_headerlen = _mm512_srli_epi64(extract_16_bit_bswap(
     _mm512_mask_i64gather_epi64(_mm512_undefined(), k, p, offsetof(struct pkt_tcp, tcp._hdrlen_rsvd_flags), 1)
   ), 12);
@@ -345,22 +356,26 @@ void fast_flows_packet_parse_handvec(__m512i ctx, __m512i nbhs, __m512i fss, __m
   big_or = _kor_mask8(big_or,
     _mm512_cmplt_epu64_mask(len, _mm512_set1_epi64(sizeof(struct pkt_tcp)))
   );
+  __m512i eth_type_and_above = _mm512_mask_i64gather_epi64(_mm512_undefined(), k, p, offsetof(struct pkt_tcp, eth.type), 1);
   big_or = _kor_mask8(
     big_or,
-    _mm512_cmpneq_epu64_mask(extract_16_bit_bswap(
-      _mm512_mask_i64gather_epi64(_mm512_undefined(), k, p, offsetof(struct pkt_tcp, eth.type), 1)
-    ), _mm512_set1_epi64(ETH_TYPE_IP))
-  );
+    _mm512_cmpneq_epu64_mask(extract_24_bit(
+      eth_type_and_above
+    ), _mm512_set1_epi64(
+      __bswap_16(ETH_TYPE_IP) | ((4 << 4) | 5) << 16
+    ))
+  ); // combined eth.type and ip._v_hl check
   big_or = _kor_mask8(
     big_or,
     _mm512_cmpneq_epu64_mask(extract_8_bit(
       _mm512_mask_i64gather_epi64(_mm512_undefined(), k, p, offsetof(struct pkt_tcp, ip.proto), 1)
     ), _mm512_set1_epi64(IP_PROTO_TCP))
   );
+  /*
   big_or = _kor_mask8(
     big_or,
     _mm512_cmpneq_epu64_mask(ip_v_hl, _mm512_set1_epi64((4 << 4) | 5))
-  );
+  );*/
   __mmask8 tcp_headerlen_toosmall = _mm512_cmplt_epu64_mask(tcp_headerlen, _mm512_set1_epi64(5));
   big_or = _kor_mask8(
     big_or,
@@ -371,7 +386,7 @@ void fast_flows_packet_parse_handvec(__m512i ctx, __m512i nbhs, __m512i fss, __m
     _mm512_cmplt_epu64_mask(
       len,
       _mm512_add_epi64(
-        extract_16_bit_bswap(_mm512_mask_i64gather_epi64(_mm512_undefined(), k, p, offsetof(struct pkt_tcp, ip.len), 1)),
+        extract_16_at_32_bit_bswap(eth_type_and_above),
         _mm512_set1_epi64(sizeof(struct eth_hdr))
       )
     )
