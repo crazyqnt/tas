@@ -40,6 +40,8 @@ struct flextcp_pl_mem *fp_state = &state_base;
 struct dataplane_context **ctxs = NULL;
 struct configuration config;
 
+void fast_flows_packet_parse_v8_M0_vvvv(__m512i k, __m512i ctx, __m512i nbhs, __m512i fss, __m512i tos);
+
 __m256i qman_set_vec(__m512i t, __m256i id, __m256i rate, __m256i avail,
     __m256i max_chunk, __m256i flags, __mmask8 k) {
     //printf("qman_set_vec"); will get called plenty of times, but the mask is empty
@@ -121,11 +123,11 @@ static struct rte_mbuf *create_payload_package(uint32_t* cur_seq) {
     *cur_seq += TEST_DATA_SIZE;
 
     uint8_t *opt = (uint8_t *) (p + 1); // TCP options
-    opt[0] = TCP_OPT_TIMESTAMP; // option type
-    opt[1] = sizeof(struct tcp_timestamp_opt); // option length
+    opt[0] = TCP_OPT_NO_OP;
+    opt[1] = TCP_OPT_NO_OP;
+    opt[2] = TCP_OPT_TIMESTAMP; // option type
+    opt[3] = sizeof(struct tcp_timestamp_opt); // option length
     // leave it at all zeroes
-    int next_opt_start = sizeof(struct tcp_timestamp_opt);
-    opt[next_opt_start] = TCP_OPT_END_OF_OPTIONS; // end of list
 
     tmb->data_len = sizeof(*p) + tcp_extra_header_len * 4 + TEST_DATA_SIZE;
 
@@ -175,7 +177,9 @@ unsigned long long run_measurement(int vectorized) {
 
         __mmask8 mask = _cvtu32_mask8(0xFF);
 
-        fast_flows_packet_parse_handvec(ctx_vec, bhs_vec, fss_vec, tcpopts_vec, mask);
+        //fast_flows_packet_parse_vec(ctx_vec, bhs_vec, fss_vec, tcpopts_vec, mask);
+        //fast_flows_packet_parse_handvec(ctx_vec, bhs_vec, fss_vec, tcpopts_vec, mask);
+        fast_flows_packet_parse_v8_M0_vvvv(_mm512_set1_epi64(0xFFFFFFFFFFFFFFFF), ctx_vec, bhs_vec, fss_vec, tcpopts_vec);
 
         __m512i fss_loaded = _mm512_loadu_epi64(&fss[0]);
         __mmask8 cmp = _mm512_cmpneq_epi64_mask(fss_loaded, _mm512_set1_epi64(0));
@@ -183,12 +187,11 @@ unsigned long long run_measurement(int vectorized) {
         __mmask8 if_mask = _kand_mask8(cmp, mask);
         __m256i ts_vec = _mm256_set1_epi32(0);
 
-        fast_flows_packet_vec(ctx_vec, bhs_vec, fss_loaded, tcpopts_vec, ts_vec, if_mask);
-
         if (_cvtmask8_u32(cmp) != 0xFF) {
-          fprintf(stderr, "fast_flows_packet_parse returned NULL, iteration (vectorized) %u\n", i);
+          fprintf(stderr, "fast_flows_packet_parse returned NULL, iteration (vectorized) %u, mask %x\n", i, _cvtmask8_u32(cmp));
           abort();
         }
+        fast_flows_packet_vec(ctx_vec, bhs_vec, fss_loaded, tcpopts_vec, ts_vec, if_mask);
 
         // "flush" transmit buffer
         assert(ctx.tx_num == 8);
@@ -233,7 +236,7 @@ int main(int argc, char *argv[]) {
     }
 
     printf("Go!\n");
-    unsigned measurements = 1024;
+    unsigned measurements = 1024 * 10;
     unsigned long long vectorized = 0, scalar = 0;
     for (unsigned i = 0; i < measurements; i++) {
       vectorized += run_measurement(1);

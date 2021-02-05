@@ -333,6 +333,10 @@ __m512i inline extract_24_bit(__m512i src) {
   return _mm512_srli_epi64(_mm512_slli_epi64(src, 40), 40);
 }
 
+__m512i inline extract_32_bit(__m512i src) {
+  return _mm512_srli_epi64(_mm512_slli_epi64(src, 32), 32);
+}
+
 // extract the two bytes starting at the 32th bit and swap them
 __m512i inline extract_16_at_32_bit_bswap(__m512i src) {
   __m512i high = _mm512_slli_epi64(_mm512_srli_epi64(_mm512_slli_epi64(src, 24), 56), 8);
@@ -409,8 +413,22 @@ void fast_flows_packet_parse_handvec(__m512i ctx, __m512i nbhs, __m512i fss, __m
     topt_initial_fail, k
   );
   big_or = _kor_mask8(big_or, topt_initial_fail);
-  { // TCP parse options main body
-    __mmask8 ts_was_set = _cvtu32_mask8(0);
+
+  __m512i opt_fast_check = extract_32_bit(
+    _mm512_mask_i64gather_epi64(_mm512_undefined(), topt_mask, opts, NULL, 1)
+  );
+
+  __mmask8 fastpath = _mm512_cmpeq_epi64_mask(opt_fast_check, 
+    _mm512_set1_epi64(((TCP_OPT_NO_OP) | (TCP_OPT_NO_OP << 8) | (TCP_OPT_TIMESTAMP << 16) | (sizeof(struct tcp_timestamp_opt) << 24)))
+  );
+  fastpath = _kand_mask8(fastpath, _mm512_cmpeq_epi64_mask(opts_len, _mm512_set1_epi64(2 + sizeof(struct tcp_timestamp_opt))));
+  fastpath = _kand_mask8(fastpath, topt_mask);
+  _mm512_mask_i64scatter_epi64(offsetof(struct tcp_opts, ts), fastpath, tos, _mm512_add_epi64(opts, _mm512_set1_epi64(2)), 1);
+  __mmask8 ts_was_set = fastpath;
+
+  topt_mask = _kandn_mask8(fastpath, topt_mask);
+
+  if (_cvtmask8_u32(topt_mask) != 0) { // TCP parse options main body
     while (true) {
       topt_mask = _kand_mask8(
         topt_mask,
@@ -462,6 +480,7 @@ void fast_flows_packet_parse_handvec(__m512i ctx, __m512i nbhs, __m512i fss, __m
         );
 
         __mmask8 len_invalid = _mm512_cmpneq_epi64_mask(opt_len, _mm512_set1_epi64(sizeof(struct tcp_timestamp_opt)));
+        len_invalid = _kand_mask8(len_invalid, cur_if_mask);
         if (_cvtmask8_u32(len_invalid) != 0) {
           big_or = _kor_mask8(big_or, len_invalid);
           cur_if_mask = _kandn_mask8(len_invalid, cur_if_mask);
@@ -475,13 +494,12 @@ void fast_flows_packet_parse_handvec(__m512i ctx, __m512i nbhs, __m512i fss, __m
 
       off = _mm512_mask_add_epi64(off, iteration_mask, off, opt_len);
     }
-
-    // All for which ts was not set
-    big_or = _kor_mask8(
-      big_or,
-      _knot_mask8(ts_was_set)
-    );
   }
+  // All for which ts was not set
+  big_or = _kor_mask8(
+    big_or,
+    _knot_mask8(ts_was_set)
+  );
 
   _mm512_mask_i64scatter_epi64(NULL, big_or, fss, _mm512_setzero_si512(), 1); // set to zero where big_or is true
 }

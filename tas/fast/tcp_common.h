@@ -263,6 +263,20 @@ static inline int tcp_parse_options(const struct pkt_tcp *p, uint16_t len,
     return -1;
   }
 
+  // Parsing "fasthpath"
+  // Expect: 2 x TCP_OPT_NO_OP + 1x TCP_OPT_TIMESTAMP + sizeof(struct tcp_timestamp_opt)
+  // Can be checked as a single 32 bit integer comparison
+  // opts_len must also be checked
+  // See: https://elixir.bootlin.com/linux/latest/source/net/ipv4/tcp_input.c#L4070
+
+  if (((uint32_t*)opt)[0] == ((TCP_OPT_NO_OP) | (TCP_OPT_NO_OP << 8) | (TCP_OPT_TIMESTAMP << 16) | (sizeof(struct tcp_timestamp_opt) << 24))
+    && opts_len == 2 + sizeof(struct tcp_timestamp_opt)) {
+    // fastpath
+    opts->ts = (struct tcp_timestamp_opt*) (opt + 2);
+    return 0;
+  } else {
+    ALIVE_CHECK();
+
   while (off < opts_len) {
     opt_kind = opt[off];
     opt_avail = opts_len - off;
@@ -296,6 +310,7 @@ static inline int tcp_parse_options(const struct pkt_tcp *p, uint16_t len,
   }
 
   return 0;
+  }
 }
 
 #endif /* ndef TCP_COMMON_H_ */
