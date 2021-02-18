@@ -442,8 +442,8 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
     }
     */
 
-    __m512i fss_loaded_0 = _mm512_mask_i64gather_epi64(_mm512_setzero_si512(), mask_0, fss_vec_0, NULL, 1);
-    __m512i fss_loaded_1 = _mm512_mask_i64gather_epi64(_mm512_setzero_si512(), mask_1, fss_vec_1, NULL, 1);
+    __m512i fss_loaded_0 = _mm512_mask_loadu_epi64(_mm512_setzero_si512(), mask_0, &fss[0]);
+    __m512i fss_loaded_1 = _mm512_mask_loadu_epi64(_mm512_setzero_si512(), mask_1, &fss[8]);
     __m512i conflicts_0 = _mm512_conflict_epi64(fss_loaded_0);
     __m512i conflicts_1 = _mm512_conflict_epi64(fss_loaded_1);
     __mmask8 masks[BATCH_SIZE];
@@ -500,9 +500,9 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
       __m256i ret_vec;
       __mmask8 cmp;
       if (i >= 8) {
-        cmp = _mm512_cmpneq_epi64_mask(_mm512_mask_i64gather_epi64(_mm512_undefined_epi32(), masks[i], fss_vec_1, NULL, 1), _mm512_set1_epi64(0));
+        cmp = _mm512_cmpneq_epi64_mask(fss_loaded_1, _mm512_setzero_si512());
       } else {
-        cmp = _mm512_cmpneq_epi64_mask(_mm512_mask_i64gather_epi64(_mm512_undefined_epi32(), masks[i], fss_vec_0, NULL, 1), _mm512_set1_epi64(0));
+        cmp = _mm512_cmpneq_epi64_mask(fss_loaded_0, _mm512_setzero_si512());
       }
       __mmask8 if_mask = _kand_mask8(cmp, masks[i]);
       __m256i ts_vec = _mm256_set1_epi32(ts);
@@ -516,14 +516,14 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
       if (i >= 8) {
         ret_vec = _mm256_mask_mov_epi32(_mm256_set1_epi32(-1), if_mask,
           fast_flows_packet_vec(ctx_vec, bhs_vec_1,
-            _mm512_mask_i64gather_epi64(_mm512_undefined_epi32(), if_mask, fss_vec_1, NULL, 1),
+            fss_loaded_1,
             tcpopts_vec_1, ts_vec, if_mask
           )
         );
       } else {
         ret_vec = _mm256_mask_mov_epi32(_mm256_set1_epi32(-1), if_mask,
           fast_flows_packet_vec(ctx_vec, bhs_vec_0,
-            _mm512_mask_i64gather_epi64(_mm512_undefined_epi32(), if_mask, fss_vec_0, NULL, 1),
+            fss_loaded_0,
             tcpopts_vec_0, ts_vec, if_mask
           )
         );
