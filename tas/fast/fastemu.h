@@ -80,6 +80,11 @@ void fast_flows_packet_pfbufs(struct dataplane_context *ctx,
 void fast_flows_kernelxsums(struct network_buf_handle *nbh,
     struct pkt_tcp *p);
 
+// TEST
+__m256i fast_flows_packet_fss1_vec(__m512i, __mmask8);
+void fast_flows_packet_fss2_vec(__m256i, __mmask8);
+void fast_flows_packet_fss3_vec(__m512i, __m512i, __m256i, __mmask8);
+
 #pragma vectorize
 int fast_flows_bump(struct dataplane_context *ctx, uint32_t flow_id,
     uint16_t bump_seq, uint32_t rx_tail, uint32_t tx_head, uint8_t flags,

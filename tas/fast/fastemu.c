@@ -388,21 +388,22 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
 
   /* look up flow states */
   //fast_flows_packet_fss(ctx, bhs, fss, n);
-    fast_flows_packet_fss_vec(ctx_vec, bhs_vec_0, fss_vec_0, mask_0);
+    __m256i hash0 = fast_flows_packet_fss1_vec(bhs_vec_0, mask_0);
+    __m256i hash1 = fast_flows_packet_fss1_vec(bhs_vec_1, mask_1);
+    fast_flows_packet_fss2_vec(hash0, mask_0);
+    fast_flows_packet_fss2_vec(hash1, mask_1);
 
     for (i = 0; i < MIN(8, n); i++) {
       rte_prefetch0(network_buf_bufoff(bhs[i]) + 64);
     }
 
-    fast_flows_packet_fss_vec(ctx_vec, bhs_vec_1, fss_vec_1, mask_1);
-    //printf("FSS: ");
-    //d_print_512u(_mm512_mask_i64gather_epi64(_mm512_set1_epi64(1), mask, fss_vec, NULL, 1), mask);
+    fast_flows_packet_fss3_vec(bhs_vec_0, fss_vec_0, hash0, mask_0);
 
-  /* prefetch packet contents (2nd cache line, TS opt overlaps) */
-  
     for (i = 8; i < n; i++) {
       rte_prefetch0(network_buf_bufoff(bhs[i]) + 64);
     }
+
+    fast_flows_packet_fss3_vec(bhs_vec_1, fss_vec_1, hash1, mask_1);
     
     //rte_prefetch0_vec(_mm512_add_epi64(network_buf_bufoff_vec(bhs_vec_0, mask_0), _mm512_set1_epi64(64)), mask_0);
     //rte_prefetch0_vec(_mm512_add_epi64(network_buf_bufoff_vec(bhs_vec_1, mask_1), _mm512_set1_epi64(64)), mask_1);

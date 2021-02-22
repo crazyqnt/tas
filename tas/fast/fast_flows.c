@@ -1449,6 +1449,76 @@ static inline uint32_t flow_hash_and_double_prefetch(struct flow_key *k) {
 }
 
 #pragma vectorize alive_check
+uint32_t fast_flows_packet_fss1(struct network_buf_handle *nbhs) {
+  struct pkt_tcp *p;
+  uint32_t hash;
+  p = network_buf_bufoff(nbhs);
+  
+  //hash = flow_hash(&key);
+  hash =  flow_hash_new(p->ip.dest, p->ip.src, p->tcp.dest, p->tcp.src);
+  rte_prefetch0(&fp_state->flowht[hash % FLEXNIC_PL_FLOWHT_ENTRIES]);
+  rte_prefetch0(&fp_state->flowht[(hash + 3) % FLEXNIC_PL_FLOWHT_ENTRIES]);
+  return hash;
+}
+
+#pragma vectorize alive_check
+void fast_flows_packet_fss2(uint32_t hash) {
+  uint32_t k, j, eh, fid, ffid;
+  struct flextcp_pl_flowhte *e;
+  for (j = 0; j < FLEXNIC_PL_FLOWHT_NBSZ; j++) {
+    k = (hash + j) % FLEXNIC_PL_FLOWHT_ENTRIES;
+    e = &fp_state->flowht[k];
+
+    ffid = e->flow_id;
+    //MEM_BARRIER();
+    eh = e->flow_hash;
+
+    fid = ffid & ((1 << FLEXNIC_PL_FLOWHTE_POSSHIFT) - 1);
+    if ((ffid & FLEXNIC_PL_FLOWHTE_VALID) == 0 || eh != hash) {
+      continue;
+    }
+    rte_prefetch0(&fp_state->flowst[fid]);
+  }
+}
+
+#pragma vectorize alive_check
+void fast_flows_packet_fss3(struct network_buf_handle *nbhs, void **fss, uint32_t hash) {
+  uint32_t k, j, eh, fid, ffid;
+  struct pkt_tcp *p;
+  struct flextcp_pl_flowhte *e;
+  struct flextcp_pl_flowst *fs;
+
+  p = network_buf_bufoff(nbhs);
+  *fss = NULL;
+
+  for (j = 0; j < FLEXNIC_PL_FLOWHT_NBSZ; j++) {
+    k = (hash + j) % FLEXNIC_PL_FLOWHT_ENTRIES;
+    e = &fp_state->flowht[k];
+
+    ffid = e->flow_id; // L1 misses
+    //MEM_BARRIER();
+    eh = e->flow_hash; // L1 misses
+
+    fid = ffid & ((1 << FLEXNIC_PL_FLOWHTE_POSSHIFT) - 1);
+    if ((ffid & FLEXNIC_PL_FLOWHTE_VALID) == 0 || eh != hash) {
+      continue;
+    }
+
+    //MEM_BARRIER();
+    fs = &fp_state->flowst[fid];
+    if ((fs->local_ip == p->ip.dest) & // L1 misses for first access
+        (fs->remote_ip == p->ip.src) &
+        (fs->local_port == p->tcp.dest) &
+        (fs->remote_port == p->tcp.src))
+    {
+      //rte_prefetch0((uint8_t *) fs + 64);
+      *fss = &fp_state->flowst[fid];
+      break;
+    }
+  }
+}
+
+#pragma vectorize alive_check
 void fast_flows_packet_fss(struct dataplane_context *ctx,
     struct network_buf_handle *nbhs, void **fss)
 {
@@ -1507,9 +1577,9 @@ void fast_flows_packet_fss(struct dataplane_context *ctx,
       k = (hash + j) % FLEXNIC_PL_FLOWHT_ENTRIES;
       e = &fp_state->flowht[k];
 
-      ffid = e->flow_id;
+      ffid = e->flow_id; // L1 misses
       //MEM_BARRIER();
-      eh = e->flow_hash;
+      eh = e->flow_hash; // L1 misses
 
       fid = ffid & ((1 << FLEXNIC_PL_FLOWHTE_POSSHIFT) - 1);
       if ((ffid & FLEXNIC_PL_FLOWHTE_VALID) == 0 || eh != hash) {
@@ -1518,7 +1588,7 @@ void fast_flows_packet_fss(struct dataplane_context *ctx,
 
       //MEM_BARRIER();
       fs = &fp_state->flowst[fid];
-      if ((fs->local_ip == p_ip_dest) &
+      if ((fs->local_ip == p_ip_dest) & // L1 misses for first access
           (fs->remote_ip == p_ip_src) &
           (fs->local_port == p_tcp_dest) &
           (fs->remote_port == p_tcp_src))
