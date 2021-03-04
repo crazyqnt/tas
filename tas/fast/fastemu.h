@@ -67,13 +67,13 @@ int fast_flows_qman_fwd(struct dataplane_context *ctx,
 int fast_flows_packet(struct dataplane_context *ctx,
     struct network_buf_handle *nbh, void *fs, struct tcp_opts *opts,
     uint32_t ts);
-__m256i fast_flows_packet_vec(__m512i, __m512i, __m512i, __m512i, __m256i, __mmask8);
+__m256i fast_flows_packet_m_vec(__m512i, __m512i, __m512i, __m512i, __m256i, __mmask8);
 void fast_flows_packet_fss(struct dataplane_context *ctx,
-    struct network_buf_handle *nbhs, void **fss);
-void fast_flows_packet_fss_vec(__m512i, __m512i, __m512i, __mmask8);
+    struct network_buf_handle **nbhs, void **fss, uint16_t n);
+void fast_flows_packet_fss_m_vec(__m512i, __m512i, __m512i, __mmask8);
 void fast_flows_packet_parse(struct dataplane_context *ctx,
-    struct network_buf_handle *nbhs, void **fss, struct tcp_opts *tos);
-void fast_flows_packet_parse_vec(__m512i, __m512i, __m512i, __m512i, __mmask8);
+    struct network_buf_handle **nbhs, void **fss, struct tcp_opts *tos, uint16_t n);
+void fast_flows_packet_parse_m_vec(__m512i, __m512i, __m512i, __m512i, __mmask8);
 void fast_flows_packet_parse_handvec(__m512i, __m512i, __m512i, __m512i, __mmask8);
 void fast_flows_packet_pfbufs(struct dataplane_context *ctx,
     void *fss, uint16_t n);

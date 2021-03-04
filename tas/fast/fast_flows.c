@@ -279,8 +279,38 @@ int fast_flows_qman_fwd(struct dataplane_context *ctx,
   return 0;
 }
 
-#pragma vectorize
 void fast_flows_packet_parse(struct dataplane_context *ctx,
+    struct network_buf_handle **nbhs, void **fss, struct tcp_opts *tos,
+    uint16_t n)
+{
+  struct pkt_tcp *p;
+  uint16_t i, len;
+
+  for (i = 0; i < n; i++) {
+    if (fss[i] == NULL)
+      continue;
+
+    p = network_buf_bufoff(nbhs[i]);
+    len = network_buf_len(nbhs[i]);
+
+    int cond =
+        (len < sizeof(*p)) |
+        (f_beui16(p->eth.type) != ETH_TYPE_IP) |
+        (p->ip.proto != IP_PROTO_TCP) |
+        (IPH_V(&p->ip) != 4) |
+        (IPH_HL(&p->ip) != 5) |
+        (TCPH_HDRLEN(&p->tcp) < 5) |
+        (len < f_beui16(p->ip.len) + sizeof(p->eth)) |
+        (tcp_parse_options(p, len, &tos[i]) != 0) |
+        (tos[i].ts == NULL);
+
+    if (cond)
+      fss[i] = NULL;
+  }
+}
+
+#pragma vectorize
+void fast_flows_packet_parse_m(struct dataplane_context *ctx,
     struct network_buf_handle *nbhs, void **fss, struct tcp_opts *tos)
 {
   struct pkt_tcp *p;
@@ -535,8 +565,381 @@ void inline add_stat_vec(__m512i pos, __m512i by, __mmask8 m) {
 }
 
 /* Received packet */
-#pragma vectorize alive_check
 int fast_flows_packet(struct dataplane_context *ctx,
+    struct network_buf_handle *nbh, void *fsp, struct tcp_opts *opts,
+    uint32_t ts)
+{
+  struct pkt_tcp *p = network_buf_bufoff(nbh);
+  struct flextcp_pl_flowst *fs = fsp;
+  uint32_t payload_bytes, payload_off, seq, ack, old_avail, new_avail,
+           orig_payload;
+  uint8_t *payload;
+  uint32_t rx_bump = 0, tx_bump = 0, rx_pos, rtt;
+  int no_permanent_sp = 0;
+  uint16_t tcp_extra_hlen, trim_start, trim_end;
+  uint16_t flow_id = fs - fp_state->flowst;
+  int trigger_ack = 0, fin_bump = 0;
+
+  tcp_extra_hlen = (TCPH_HDRLEN(&p->tcp) - 5) * 4;
+  payload_off = sizeof(*p) + tcp_extra_hlen;
+  payload_bytes =
+      f_beui16(p->ip.len) - (sizeof(p->ip) + sizeof(p->tcp) + tcp_extra_hlen);
+  orig_payload = payload_bytes;
+
+#if PL_DEBUG_ARX
+  fprintf(stderr, "FLOW local=%08x:%05u remote=%08x:%05u  RX: seq=%u ack=%u "
+      "flags=%x payload=%u\n",
+      f_beui32(p->ip.dest), f_beui16(p->tcp.dest),
+      f_beui32(p->ip.src), f_beui16(p->tcp.src), f_beui32(p->tcp.seqno),
+      f_beui32(p->tcp.ackno), TCPH_FLAGS(&p->tcp), payload_bytes);
+#endif
+
+  fs_lock(fs);
+
+#ifdef FLEXNIC_TRACING
+  struct flextcp_pl_trev_rxfs te_rxfs = {
+      .local_ip = f_beui32(p->ip.dest),
+      .remote_ip = f_beui32(p->ip.src),
+      .local_port = f_beui16(p->tcp.dest),
+      .remote_port = f_beui16(p->tcp.src),
+
+      .flow_id = flow_id,
+      .flow_seq = f_beui32(p->tcp.seqno),
+      .flow_ack = f_beui32(p->tcp.ackno),
+      .flow_flags = TCPH_FLAGS(&p->tcp),
+      .flow_len = payload_bytes,
+
+      .fs_rx_nextpos = fs->rx_next_pos,
+      .fs_rx_nextseq = fs->rx_next_seq,
+      .fs_rx_avail = fs->rx_avail,
+      .fs_tx_nextpos = fs->tx_next_pos,
+      .fs_tx_nextseq = fs->tx_next_seq,
+      .fs_tx_sent = fs->tx_sent,
+      .fs_tx_avail = fs->tx_avail,
+    };
+  trace_event(FLEXNIC_PL_TREV_RXFS, sizeof(te_rxfs), &te_rxfs);
+#endif
+
+#if PL_DEBUG_ARX
+  fprintf(stderr, "FLOW local=%08x:%05u remote=%08x:%05u  ST: op=%"PRIx64
+      " rx_pos=%x rx_next_seq=%u rx_avail=%x  tx_pos=%x tx_next_seq=%u"
+      " tx_sent=%u sp=%u\n",
+      f_beui32(p->ip.dest), f_beui16(p->tcp.dest),
+      f_beui32(p->ip.src), f_beui16(p->tcp.src), fs->opaque, fs->rx_next_pos,
+      fs->rx_next_seq, fs->rx_avail, fs->tx_next_pos, fs->tx_next_seq,
+      fs->tx_sent, fs->slowpath);
+#endif
+
+  /* state indicates slow path */
+  if (UNLIKELY((fs->rx_base_sp & FLEXNIC_PL_FLOWST_SLOWPATH) != 0)) {
+    fprintf(stderr, "dma_krx_pkt_fastpath: slowpath because of state\n");
+    goto slowpath;
+  }
+
+  /* if we get weird flags -> kernel */
+  if (UNLIKELY((TCPH_FLAGS(&p->tcp) & ~(TCP_ACK | TCP_PSH | TCP_ECE | TCP_CWR |
+            TCP_FIN)) != 0))
+  {
+    if ((TCPH_FLAGS(&p->tcp) & TCP_SYN) != 0) {
+      /* for SYN/SYN-ACK we'll let the kernel handle them out of band */
+      no_permanent_sp = 1;
+    } else {
+      fprintf(stderr, "dma_krx_pkt_fastpath: slow path because of flags (%x)\n",
+          TCPH_FLAGS(&p->tcp));
+    }
+    goto slowpath;
+  }
+
+  /* calculate how much data is available to be sent before processing this
+   * packet, to detect whether more data can be sent afterwards */
+  old_avail = tcp_txavail(fs, NULL);
+
+  seq = f_beui32(p->tcp.seqno);
+  ack = f_beui32(p->tcp.ackno);
+  rx_pos = fs->rx_next_pos;
+
+  /* trigger an ACK if there is payload (even if we discard it) */
+#ifndef SKIP_ACK
+  if (payload_bytes > 0)
+    trigger_ack = 1;
+#endif
+
+  /* Stats for CC */
+  if ((TCPH_FLAGS(&p->tcp) & TCP_ACK) == TCP_ACK) {
+    fs->cnt_rx_acks++;
+  }
+
+  /* if there is a valid ack, process it */
+  if (LIKELY((TCPH_FLAGS(&p->tcp) & TCP_ACK) == TCP_ACK &&
+      tcp_valid_rxack(fs, ack, &tx_bump) == 0))
+  {
+    fs->cnt_rx_ack_bytes += tx_bump;
+    if ((TCPH_FLAGS(&p->tcp) & TCP_ECE) == TCP_ECE) {
+      fs->cnt_rx_ecn_bytes += tx_bump;
+    }
+
+    if (LIKELY(tx_bump <= fs->tx_sent)) {
+      fs->tx_sent -= tx_bump;
+    } else {
+#ifdef ALLOW_FUTURE_ACKS
+      fs->tx_next_seq += tx_bump - fs->tx_sent;
+      fs->tx_next_pos += tx_bump - fs->tx_sent;
+      if (fs->tx_next_pos >= fs->tx_len)
+        fs->tx_next_pos -= fs->tx_len;
+      fs->tx_avail -= tx_bump - fs->tx_sent;
+      fs->tx_sent = 0;
+#else
+      /* this should not happen */
+      fprintf(stderr, "dma_krx_pkt_fastpath: acked more bytes than sent\n");
+      abort();
+#endif
+    }
+
+    /* duplicate ack */
+    if (UNLIKELY(tx_bump != 0)) {
+      fs->rx_dupack_cnt = 0;
+    } else if (UNLIKELY(orig_payload == 0 && ++fs->rx_dupack_cnt >= 3)) {
+      /* reset to last acknowledged position */
+      flow_reset_retransmit(fs);
+      goto unlock;
+    }
+  }
+
+#ifdef FLEXNIC_PL_OOO_RECV
+  /* check if we should drop this segment */
+  if (UNLIKELY(tcp_trim_rxbuf(fs, seq, payload_bytes, &trim_start, &trim_end) != 0)) {
+    /* packet is completely outside of unused receive buffer */
+    trigger_ack = 1;
+    goto unlock;
+  }
+
+  /* trim payload to what we can actually use */
+  payload_bytes -= trim_start + trim_end;
+  payload_off += trim_start;
+  payload = (uint8_t *) p + payload_off;
+  seq += trim_start;
+
+  /* handle out of order segment */
+  if (UNLIKELY(seq != fs->rx_next_seq)) {
+    trigger_ack = 1;
+
+    /* if there is no payload abort immediately */
+    if (payload_bytes == 0) {
+      goto unlock;
+    }
+
+    /* otherwise check if we can add it to the out of order interval */
+    if (fs->rx_ooo_len == 0) {
+      fs->rx_ooo_start = seq;
+      fs->rx_ooo_len = payload_bytes;
+      flow_rx_seq_write(fs, seq, payload_bytes, payload);
+      /*fprintf(stderr, "created OOO interval (%p start=%u len=%u)\n",
+          fs, fs->rx_ooo_start, fs->rx_ooo_len);*/
+    } else if (seq + payload_bytes == fs->rx_ooo_start) {
+      /* TODO: those two overlap checks should be more sophisticated */
+      fs->rx_ooo_start = seq;
+      fs->rx_ooo_len += payload_bytes;
+      flow_rx_seq_write(fs, seq, payload_bytes, payload);
+      /*fprintf(stderr, "extended OOO interval (%p start=%u len=%u)\n",
+          fs, fs->rx_ooo_start, fs->rx_ooo_len);*/
+    } else if (fs->rx_ooo_start + fs->rx_ooo_len == seq) {
+      /* TODO: those two overlap checks should be more sophisticated */
+      fs->rx_ooo_len += payload_bytes;
+      flow_rx_seq_write(fs, seq, payload_bytes, payload);
+      /*fprintf(stderr, "extended OOO interval (%p start=%u len=%u)\n",
+          fs, fs->rx_ooo_start, fs->rx_ooo_len);*/
+    } else {
+      /*fprintf(stderr, "Sad, no luck with OOO interval (%p ooo.start=%u "
+          "ooo.len=%u seq=%u bytes=%u)\n", fs, fs->rx_ooo_start,
+          fs->rx_ooo_len, seq, payload_bytes);*/
+    }
+    goto unlock;
+  }
+
+#else
+  /* check if we should drop this segment */
+  if (tcp_valid_rxseq(fs, seq, payload_bytes, &trim_start, &trim_end) != 0) {
+    trigger_ack = 1;
+#if 0
+    fprintf(stderr, "dma_krx_pkt_fastpath: packet with bad seq "
+        "(got %u, expect %u, avail %u, payload %u)\n", seq, fs->rx_next_seq,
+        fs->rx_avail, payload_bytes);
+#endif
+    goto unlock;
+  }
+
+  /* trim payload to what we can actually use */
+  payload_bytes -= trim_start + trim_end;
+  payload_off += trim_start;
+  payload = (uint8_t *) p + payload_off;
+#endif
+
+  /* update rtt estimate */
+  fs->tx_next_ts = f_beui32(opts->ts->ts_val);
+  if (LIKELY((TCPH_FLAGS(&p->tcp) & TCP_ACK) == TCP_ACK &&
+      f_beui32(opts->ts->ts_ecr) != 0))
+  {
+    rtt = ts - f_beui32(opts->ts->ts_ecr);
+    if (rtt < TCP_MAX_RTT) {
+      if (LIKELY(fs->rtt_est != 0)) {
+        fs->rtt_est = (fs->rtt_est * 7 + rtt) / 8;
+      } else {
+        fs->rtt_est = rtt;
+      }
+    }
+  }
+
+  fs->rx_remote_avail = f_beui16(p->tcp.wnd);
+
+  /* make sure we don't receive anymore payload after FIN */
+  if ((fs->rx_base_sp & FLEXNIC_PL_FLOWST_RXFIN) == FLEXNIC_PL_FLOWST_RXFIN &&
+      payload_bytes > 0)
+  {
+    fprintf(stderr, "fast_flows_packet: data after FIN dropped\n");
+    goto unlock;
+  }
+
+  /* if there is payload, dma it to the receive buffer */
+  if (payload_bytes > 0) {
+    flow_rx_write(fs, fs->rx_next_pos, payload_bytes, payload);
+
+    rx_bump = payload_bytes;
+    fs->rx_avail -= payload_bytes;
+    fs->rx_next_pos += payload_bytes;
+    if (fs->rx_next_pos >= fs->rx_len) {
+      fs->rx_next_pos -= fs->rx_len;
+    }
+    assert(fs->rx_next_pos < fs->rx_len);
+    fs->rx_next_seq += payload_bytes;
+#ifndef SKIP_ACK
+    trigger_ack = 1;
+#endif
+
+#ifdef FLEXNIC_PL_OOO_RECV
+    /* if we have out of order segments, check whether buffer is continuous
+     * or superfluous */
+    if (UNLIKELY(fs->rx_ooo_len != 0)) {
+      if (tcp_trim_rxbuf(fs, fs->rx_ooo_start, fs->rx_ooo_len, &trim_start,
+            &trim_end) != 0) {
+          /*fprintf(stderr, "dropping ooo (%p ooo.start=%u ooo.len=%u seq=%u "
+              "len=%u next_seq=%u)\n", fs, fs->rx_ooo_start, fs->rx_ooo_len, seq,
+              payload_bytes, fs->rx_next_seq);*/
+        /* completely superfluous: drop out of order interval */
+        fs->rx_ooo_len = 0;
+      } else {
+        /* adjust based on overlap */
+        fs->rx_ooo_start += trim_start;
+        fs->rx_ooo_len -= trim_start + trim_end;
+        /*fprintf(stderr, "adjusting ooo (%p ooo.start=%u ooo.len=%u seq=%u "
+            "len=%u next_seq=%u)\n", fs, fs->rx_ooo_start, fs->rx_ooo_len, seq,
+            payload_bytes, fs->rx_next_seq);*/
+        if (fs->rx_ooo_len > 0 && fs->rx_ooo_start == fs->rx_next_seq) {
+          /* yay, we caught up, make continuous and drop OOO interval */
+          /*fprintf(stderr, "caught up with ooo buffer (%p start=%u len=%u)\n",
+              fs, fs->rx_ooo_start, fs->rx_ooo_len);*/
+
+          rx_bump += fs->rx_ooo_len;
+          fs->rx_avail -= fs->rx_ooo_len;
+          fs->rx_next_pos += fs->rx_ooo_len;
+          if (fs->rx_next_pos >= fs->rx_len) {
+            fs->rx_next_pos -= fs->rx_len;
+          }
+          assert(fs->rx_next_pos < fs->rx_len);
+          fs->rx_next_seq += fs->rx_ooo_len;
+
+          fs->rx_ooo_len = 0;
+        }
+      }
+    }
+#endif
+  }
+
+  if ((TCPH_FLAGS(&p->tcp) & TCP_FIN) == TCP_FIN &&
+      !(fs->rx_base_sp & FLEXNIC_PL_FLOWST_RXFIN))
+  {
+    if (fs->rx_next_seq == f_beui32(p->tcp.seqno) + orig_payload && !fs->rx_ooo_len) {
+      fin_bump = 1;
+      fs->rx_base_sp |= FLEXNIC_PL_FLOWST_RXFIN;
+      /* FIN takes up sequence number space */
+      fs->rx_next_seq++;
+      trigger_ack = 1;
+    } else {
+      fprintf(stderr, "fast_flows_packet: ignored fin because out of order\n");
+    }
+  }
+
+unlock:
+  /* if we bumped at least one, then we need to add a notification to the
+   * queue */
+  if (LIKELY(rx_bump != 0 || tx_bump != 0 || fin_bump)) {
+#if PL_DEBUG_ARX
+    fprintf(stderr, "dma_krx_pkt_fastpath: updating application state\n");
+#endif
+
+    uint16_t type;
+    type = FLEXTCP_PL_ARX_CONNUPDATE;
+
+    if (fin_bump) {
+      type |= FLEXTCP_PL_ARX_FLRXDONE << 8;
+    }
+
+#ifdef FLEXNIC_TRACING
+    struct flextcp_pl_trev_arx te_arx = {
+        .opaque = fs->opaque,
+        .rx_bump = rx_bump,
+        .tx_bump = tx_bump,
+        .rx_pos = rx_pos,
+        .flags = type,
+
+        .flow_id = flow_id,
+        .db_id = fs->db_id,
+
+        .local_ip = f_beui32(p->ip.dest),
+        .remote_ip = f_beui32(p->ip.src),
+        .local_port = f_beui16(p->tcp.dest),
+        .remote_port = f_beui16(p->tcp.src),
+      };
+    trace_event(FLEXNIC_PL_TREV_ARX, sizeof(te_arx), &te_arx);
+#endif
+
+    arx_cache_add(ctx, fs->db_id, fs->opaque, rx_bump, rx_pos, tx_bump, type);
+  }
+
+  /* Flow control: More receiver space? -> might need to start sending */
+  new_avail = tcp_txavail(fs, NULL);
+  if (new_avail > old_avail) {
+    /* update qman queue */
+    if (qman_set(&ctx->qman, flow_id, fs->tx_rate, new_avail -
+          old_avail, TCP_MSS, QMAN_SET_RATE | QMAN_SET_MAXCHUNK
+          | QMAN_ADD_AVAIL) != 0)
+    {
+      fprintf(stderr, "fast_flows_packet: qman_set 1 failed, UNEXPECTED\n");
+      abort();
+    }
+  }
+
+  /* if we need to send an ack, also send packet to TX pipeline to do so */
+  if (trigger_ack) {
+    flow_tx_ack(ctx, fs->tx_next_seq, fs->rx_next_seq, fs->rx_avail,
+        fs->tx_next_ts, ts, nbh, opts->ts);
+  }
+
+  fs_unlock(fs);
+  return trigger_ack;
+
+slowpath:
+  if (!no_permanent_sp) {
+    fs->rx_base_sp |= FLEXNIC_PL_FLOWST_SLOWPATH;
+  }
+
+  fs_unlock(fs);
+  /* TODO: should pass current flow state to kernel as well */
+  return -1;
+}
+
+/* Received packet */
+#pragma vectorize alive_check
+int fast_flows_packet_m(struct dataplane_context *ctx,
     struct network_buf_handle *nbh, void *fsp, struct tcp_opts *opts,
     uint32_t ts)
 {
@@ -1518,8 +1921,92 @@ void fast_flows_packet_fss3(struct network_buf_handle *nbhs, void **fss, uint32_
   }
 }
 
-#pragma vectorize alive_check
 void fast_flows_packet_fss(struct dataplane_context *ctx,
+    struct network_buf_handle **nbhs, void **fss, uint16_t n)
+{
+  uint32_t hashes[n];
+  uint32_t h, k, j, eh, fid, ffid;
+  uint16_t i;
+  struct pkt_tcp *p;
+  //struct flow_key key;
+  struct flextcp_pl_flowhte *e;
+  struct flextcp_pl_flowst *fs;
+
+  /* calculate hashes and prefetch hash table buckets */
+  for (i = 0; i < n; i++) {
+    p = network_buf_bufoff(nbhs[i]);
+
+    /*
+    key.local_ip = p->ip.dest;
+    key.remote_ip = p->ip.src;
+    key.local_port = p->tcp.dest;
+    key.remote_port = p->tcp.src;
+    */
+    h = flow_hash_new(p->ip.dest, p->ip.src, p->tcp.dest, p->tcp.src);
+
+    rte_prefetch0(&fp_state->flowht[h % FLEXNIC_PL_FLOWHT_ENTRIES]);
+    rte_prefetch0(&fp_state->flowht[(h + 3) % FLEXNIC_PL_FLOWHT_ENTRIES]);
+    hashes[i] = h;
+  }
+
+  /* prefetch flow state for buckets with matching hashes
+   * (usually 1 per packet, except in case of collisions) */
+  for (i = 0; i < n; i++) {
+    h = hashes[i];
+    for (j = 0; j < FLEXNIC_PL_FLOWHT_NBSZ; j++) {
+      k = (h + j) % FLEXNIC_PL_FLOWHT_ENTRIES;
+      e = &fp_state->flowht[k];
+
+      ffid = e->flow_id;
+      MEM_BARRIER();
+      eh = e->flow_hash;
+
+      fid = ffid & ((1 << FLEXNIC_PL_FLOWHTE_POSSHIFT) - 1);
+      if ((ffid & FLEXNIC_PL_FLOWHTE_VALID) == 0 || eh != h) {
+        continue;
+      }
+
+      rte_prefetch0(&fp_state->flowst[fid]);
+    }
+  }
+
+  /* finish hash table lookup by checking 5-tuple in flow state */
+  for (i = 0; i < n; i++) {
+    p = network_buf_bufoff(nbhs[i]);
+    fss[i] = NULL;
+    h = hashes[i];
+
+    for (j = 0; j < FLEXNIC_PL_FLOWHT_NBSZ; j++) {
+      k = (h + j) % FLEXNIC_PL_FLOWHT_ENTRIES;
+      e = &fp_state->flowht[k];
+
+      ffid = e->flow_id;
+      MEM_BARRIER();
+      eh = e->flow_hash;
+
+      fid = ffid & ((1 << FLEXNIC_PL_FLOWHTE_POSSHIFT) - 1);
+      if ((ffid & FLEXNIC_PL_FLOWHTE_VALID) == 0 || eh != h) {
+        continue;
+      }
+
+      MEM_BARRIER();
+      fs = &fp_state->flowst[fid];
+      if ((fs->local_ip == p->ip.dest) &
+          (fs->remote_ip == p->ip.src) &
+          (fs->local_port == p->tcp.dest) &
+          (fs->remote_port == p->tcp.src))
+      {
+        rte_prefetch0((uint8_t *) fs + 64);
+        fss[i] = &fp_state->flowst[fid];
+        break;
+      }
+    }
+  }
+}
+
+
+#pragma vectorize alive_check
+void fast_flows_packet_fss_m(struct dataplane_context *ctx,
     struct network_buf_handle *nbhs, void **fss)
 {
   uint32_t hash;
