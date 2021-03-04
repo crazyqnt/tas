@@ -95,10 +95,10 @@ static void flow_init(uint32_t fid, uint32_t rxlen, uint32_t txlen, uint64_t opa
 /* alloc dummy mbuf */
 static struct rte_mbuf *mbuf_alloc(void)
 {
-  struct rte_mbuf *tmb = calloc(1, 2048);
-  tmb->data_off = 256;
+  struct rte_mbuf *tmb = calloc(1, 2048); // 512?
+  tmb->data_off = 0; // or 128? originally 256
   tmb->buf_addr = (uint8_t *) (tmb + 1) + tmb->data_off;
-  tmb->buf_len = 2048 - sizeof(*tmb);
+  tmb->buf_len = 512 - sizeof(*tmb);
   return tmb;
 }
 
@@ -164,6 +164,12 @@ unsigned long long run_measurement(int vectorized) {
       MEM_BARRIER();
       for (unsigned i = 0; i < 1024; i += 8) {
         struct tcp_opts tcpopts[8];
+        if (i + 8 < 1024) {
+          for (unsigned j = 0; j < 8; j++) {
+            struct rte_mbuf* buf = (struct rte_mbuf *)mbufs[i + 8 + j];
+            rte_prefetch0(buf);
+          }
+        }
         __m512i ctx_vec = _mm512_set1_epi64((uintptr_t) &ctx);
         __m512i bhs_vec = _mm512_loadu_epi64(&mbufs[i]);
         __m512i fss_vec = _mm512_set_epi64((uintptr_t) (fss + 7), (uintptr_t) (fss + 6),
@@ -178,8 +184,8 @@ unsigned long long run_measurement(int vectorized) {
         __mmask8 mask = _cvtu32_mask8(0xFF);
 
         //fast_flows_packet_parse_vec(ctx_vec, bhs_vec, fss_vec, tcpopts_vec, mask);
-        //fast_flows_packet_parse_handvec(ctx_vec, bhs_vec, fss_vec, tcpopts_vec, mask);
-        fast_flows_packet_parse_v8_M0_vvvv(_mm512_set1_epi64(0xFFFFFFFFFFFFFFFF), ctx_vec, bhs_vec, fss_vec, tcpopts_vec);
+        fast_flows_packet_parse_handvec(ctx_vec, bhs_vec, fss_vec, tcpopts_vec, mask);
+        //fast_flows_packet_parse_v8_M0_vvvv(_mm512_set1_epi64(0xFFFFFFFFFFFFFFFF), ctx_vec, bhs_vec, fss_vec, tcpopts_vec);
 
         __m512i fss_loaded = _mm512_loadu_epi64(&fss[0]);
         __mmask8 cmp = _mm512_cmpneq_epi64_mask(fss_loaded, _mm512_set1_epi64(0));
@@ -193,6 +199,16 @@ unsigned long long run_measurement(int vectorized) {
         }
         fast_flows_packet_vec(ctx_vec, bhs_vec, fss_loaded, tcpopts_vec, ts_vec, if_mask);
 
+/*
+        if (i + 8 < 1024) {
+          for (unsigned j = 0; j < 8; j++) {
+            struct network_buf_handle* buf = (struct network_buf_handle *)mbufs[i + 8 + j];
+            struct pkt_tcp *p = (struct pkt_tcp *) network_buf_bufoff(buf);
+            rte_prefetch0(&p->eth.type);
+          }
+        }
+        */
+
         // "flush" transmit buffer
         assert(ctx.tx_num == 8);
         ctx.tx_num = 0;
@@ -204,6 +220,10 @@ unsigned long long run_measurement(int vectorized) {
       MEM_BARRIER();
       for (unsigned i = 0; i < 1024; i++) {
         struct tcp_opts topts;
+        if (i + 1 < 1024) {
+          struct rte_mbuf* buf = (struct rte_mbuf *)mbufs[i + 1];
+          rte_prefetch0(buf);
+        }
         fast_flows_packet_parse(&ctx, (struct network_buf_handle*)mbufs[i], (void**)&fss[i % 8], &topts);
 
         if (fss[i % 8] == NULL) {
@@ -236,7 +256,7 @@ int main(int argc, char *argv[]) {
     }
 
     printf("Go!\n");
-    unsigned measurements = 1024 * 10;
+    unsigned measurements = 1024 * 5 * 10;
     unsigned long long vectorized = 0, scalar = 0;
     for (unsigned i = 0; i < measurements; i++) {
       vectorized += run_measurement(1);
