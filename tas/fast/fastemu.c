@@ -348,7 +348,7 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
     n0 = VEC_WIDTH;
   }
 
-  if (n < 6) { // completely original code
+  if (n < 7) { // completely original code
     //fprintf(stderr, "Original code with %d packets\n", n);
     /* prefetch packet contents (1st cache line) */
     for (i = 0; i < n; i++) {
@@ -382,7 +382,7 @@ static unsigned poll_rx(struct dataplane_context *ctx, uint32_t ts,
     }
   } else {
     //fprintf(stderr, "Vector code with %d packets\n", n);
-    bool use_second_vec = n > 13;
+    bool use_second_vec = n > 14;
     for (i = 0; i < MIN(n, 8); i++) {
       rte_prefetch0(network_buf_bufoff(bhs[i]));
     }
@@ -622,22 +622,10 @@ static unsigned poll_queues(struct dataplane_context *ctx, uint32_t ts)
     unsigned start = i * 8;
     unsigned amount = MIN(8, k - start);
 
-    if (amount > 2) {
-      __mmask8 mask = _cvtu32_mask8((1 << amount) - 1);
-
-      __m512i vctx = _mm512_set1_epi64((uintptr_t) ctx);
-      __m512i vaqes = _mm512_loadu_epi64(&aqes[start]);
-      __m512i vhandles = _mm512_loadu_epi64(&handles[num_bufs]);
-      __m256i vts = _mm256_set1_epi32(ts);
-      __m256i vret = fast_appctx_poll_bump_vec(vctx, vaqes, vhandles, vts, mask);
-      __mmask8 vuse = _mm256_mask_cmpeq_epi32_mask(mask, vret, _mm256_setzero_si256());
-      num_bufs += _mm_popcnt_u32(_cvtmask8_u32(vuse));
-    } else {
-      for (j = start; j < start + amount; j++) {
-        ret = fast_appctx_poll_bump(ctx, aqes[j], handles[num_bufs], ts);
-        if (ret == 0)
-          num_bufs++;
-      }
+    for (j = start; j < start + amount; j++) {
+      ret = fast_appctx_poll_bump(ctx, aqes[j], handles[num_bufs], ts);
+      if (ret == 0)
+        num_bufs++;
     }
   }
 
@@ -733,25 +721,12 @@ static unsigned poll_qman(struct dataplane_context *ctx, uint32_t ts)
     unsigned start = i * 8;
     unsigned amount = MIN(8, ret - start);
 
-    if (amount > 2) {
-      __mmask8 mask = _cvtu32_mask8((1 << amount) - 1);
-      __m256i vq_ids = _mm256_loadu_epi32(&q_ids[start]);
+    int use;
+    for (unsigned j = start; j < start + amount; j++) {
+      use = fast_flows_qman(ctx, q_ids[j], handles[off], ts);
 
-      __m512i vctx = _mm512_set1_epi64((uintptr_t) ctx);
-      __m512i vhandles = _mm512_loadu_epi64(&handles[off]);
-      __m256i vts = _mm256_set1_epi32(ts);
-
-      __m256i vret = fast_flows_qman_vec(vctx, vq_ids, vhandles, vts, mask);
-      __mmask8 vuse = _mm256_mask_cmpeq_epi32_mask(mask, vret, _mm256_setzero_si256());
-      off += _mm_popcnt_u32(_cvtmask8_u32(vuse));
-    } else {
-      int use;
-      for (unsigned j = start; j < start + amount; j++) {
-        use = fast_flows_qman(ctx, q_ids[j], handles[off], ts);
-
-        if (use == 0)
-          off++;
-      }
+      if (use == 0)
+        off++;
     }
   }
 

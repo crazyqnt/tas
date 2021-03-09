@@ -129,27 +129,6 @@ void notify_fastpath_core_wrapper(unsigned core) {
   notify_fastpath_core(core);
 }
 
-static void flow_tx_segment_modified(struct dataplane_context *ctx,
-    struct network_buf_handle *nbh, struct flextcp_pl_flowst *fs,
-    uint32_t seq, uint32_t ack, uint32_t rxwnd, uint16_t payload,
-    uint32_t payload_pos, uint32_t ts_echo, uint32_t ts_my, uint8_t fin) {
-  flow_tx_segment(ctx, nbh, fs, seq, ack, rxwnd, payload, payload_pos, ts_echo, ts_my, fin);
-}
-
-static void flow_tx_segment_modified_vec(
-  __m512i vctx, __m512i vnbh, __m512i vfs, __m256i vseq, __m256i vack, __m256i vrxwnd, __m256i vpayload,
-  __m256i vpayload_pos, __m256i vts_echo, __m256i vts_my, __m256i vfin, __mmask8 k
-) {
-  // Just need to re-order the network buf handles
-  // from [0, 1, 2, ...] to where 0 is at first set position in k, 1 is at second set position in k etc.
-  vnbh = _mm512_maskz_expand_epi64(k, vnbh); // <- this should to just that!
-
-  flow_tx_segment_vec(vctx, vnbh,
-    vfs, vseq, vack, vrxwnd, vpayload, vpayload_pos, vts_echo, vts_my, vfin, k
-  );
-}
-
-#pragma vectorize alive_check
 int fast_flows_qman(struct dataplane_context *ctx, uint32_t queue,
     struct network_buf_handle *nbh, uint32_t ts)
 {
@@ -246,7 +225,7 @@ int fast_flows_qman(struct dataplane_context *ctx, uint32_t queue,
   }
 
   /* send out segment */
-  flow_tx_segment_modified(ctx, nbh, fs, tx_seq, ack, rx_wnd, len, tx_pos,
+  flow_tx_segment(ctx, nbh, fs, tx_seq, ack, rx_wnd, len, tx_pos,
       fs->tx_next_ts, ts, fin);
 unlock:
   fs_unlock(fs);
@@ -1383,7 +1362,6 @@ slowpath:
 }
 
 /* Update receive and transmit queue pointers from application */
-#pragma vectorize alive_check
 int fast_flows_bump(struct dataplane_context *ctx, uint32_t flow_id,
     uint16_t bump_seq, uint32_t rx_bump, uint32_t tx_bump, uint8_t flags,
     struct network_buf_handle *nbh, uint32_t ts)
@@ -1498,7 +1476,7 @@ int fast_flows_bump(struct dataplane_context *ctx, uint32_t flow_id,
   /* receive buffer freed up from empty, need to send out a window update, if
    * we're not sending anyways. */
   if (new_avail == 0 && rx_avail_prev == 0 && fs->rx_avail != 0) {
-    flow_tx_segment_modified(ctx, nbh, fs, fs->tx_next_seq, fs->rx_next_seq,
+    flow_tx_segment(ctx, nbh, fs, fs->tx_next_seq, fs->rx_next_seq,
         fs->rx_avail, 0, 0, fs->tx_next_ts, ts, 0);
     ret = 0;
   }
